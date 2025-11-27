@@ -35,7 +35,9 @@ type ClusterTarget struct {
 
 // KrknTargetRequestSpec defines the desired state of KrknTargetRequest.
 type KrknTargetRequestSpec struct {
-	// UUID is a unique identifier for this request
+	// UUID is a unique identifier for this request.
+	// The operator will automatically add a label 'krkn.krkn-chaos.dev/uuid' with this value
+	// for easy selection: kubectl get krkntargetrequests -l krkn.krkn-chaos.dev/uuid=<uuid>
 	UUID string `json:"uuid"`
 }
 

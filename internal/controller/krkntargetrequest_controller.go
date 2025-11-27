@@ -98,6 +98,28 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Initialize status to "pending" if it's empty (new resource)
 	if krknRequest.Status.Status == "" {
 		logger.Info("Initializing status to pending", "UUID", krknRequest.Spec.UUID)
+
+		// Add UUID label if not present
+		needsLabelUpdate := false
+		if krknRequest.Labels == nil {
+			krknRequest.Labels = make(map[string]string)
+			needsLabelUpdate = true
+		}
+		if _, exists := krknRequest.Labels["krkn.krkn-chaos.dev/uuid"]; !exists {
+			krknRequest.Labels["krkn.krkn-chaos.dev/uuid"] = krknRequest.Spec.UUID
+			needsLabelUpdate = true
+		}
+
+		// Update labels if needed
+		if needsLabelUpdate {
+			err = r.Update(ctx, krknRequest)
+			if err != nil {
+				logger.Error(err, "Failed to add UUID label")
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Update status
 		krknRequest.Status.Status = "pending"
 		err = r.Status().Update(ctx, krknRequest)
 		if err != nil {

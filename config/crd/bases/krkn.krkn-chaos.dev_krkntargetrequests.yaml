@@ -52,7 +52,10 @@ spec:
             description: KrknTargetRequestSpec defines the desired state of KrknTargetRequest.
             properties:
               uuid:
-                description: UUID is a unique identifier for this request
+                description: |-
+                  UUID is a unique identifier for this request.
+                  The operator will automatically add a label 'krkn.krkn-chaos.dev/uuid' with this value
+                  for easy selection: kubectl get krkntargetrequests -l krkn.krkn-chaos.dev/uuid=<uuid>
                 type: string
             required:
             - uuid
