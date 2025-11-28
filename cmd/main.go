@@ -19,6 +19,7 @@ Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -28,11 +29,16 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -44,6 +50,8 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -54,6 +62,115 @@ func init() {
 
 	utilruntime.Must(krknv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// getOperatorName reads the operator name from the ConfigMap
+func getOperatorName(ctx context.Context, k8sClient client.Client, namespace string) (string, error) {
+	// Try to read from ConfigMap
+	configMap := &corev1.ConfigMap{}
+	err := k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "krkn-operator-config",
+		Namespace: namespace,
+	}, configMap)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// ConfigMap not found - use default operator name
+			setupLog.Info("ConfigMap not found, using default operator name", "default", "krkn-operator-acm")
+			return "krkn-operator-acm", nil
+		}
+		return "", err
+	}
+
+	operatorName, ok := configMap.Data["operator-name"]
+	if !ok || operatorName == "" {
+		setupLog.Info("operator-name not found in ConfigMap, using default", "default", "krkn-operator-acm")
+		return "krkn-operator-acm", nil
+	}
+
+	setupLog.Info("Loaded operator name from ConfigMap", "operator-name", operatorName)
+	return operatorName, nil
+}
+
+// ProviderRegistrationRunnable ensures the operator registers itself on startup
+type ProviderRegistrationRunnable struct {
+	Client       client.Client
+	Namespace    string
+	OperatorName string
+}
+
+// Start implements the Runnable interface
+func (r *ProviderRegistrationRunnable) Start(ctx context.Context) error {
+	setupLog.Info("Starting provider registration", "operator-name", r.OperatorName, "namespace", r.Namespace)
+
+	// Register the provider
+	if err := registerOperatorProvider(ctx, r.Client, r.Namespace, r.OperatorName); err != nil {
+		setupLog.Error(err, "FATAL: Failed to register operator provider - operator cannot function without registration")
+		return err
+	}
+
+	setupLog.Info("✅ Operator successfully registered as provider", "operator-name", r.OperatorName)
+
+	// Keep running to satisfy the Runnable interface
+	<-ctx.Done()
+	return nil
+}
+
+// registerOperatorProvider creates or updates the KrknOperatorTargetProvider CR
+func registerOperatorProvider(ctx context.Context, k8sClient client.Client, namespace, operatorName string) error {
+	setupLog.Info("Registering operator provider", "operator-name", operatorName, "namespace", namespace)
+
+	provider := &krknv1alpha1.KrknOperatorTargetProvider{}
+	providerName := operatorName // Use operator name as the CR name
+
+	err := k8sClient.Get(ctx, types.NamespacedName{
+		Name:      providerName,
+		Namespace: namespace,
+	}, provider)
+
+	now := metav1.Now()
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new provider
+			provider = &krknv1alpha1.KrknOperatorTargetProvider{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      providerName,
+					Namespace: namespace,
+				},
+				Spec: krknv1alpha1.KrknOperatorTargetProviderSpec{
+					OperatorName: operatorName,
+				},
+				Status: krknv1alpha1.KrknOperatorTargetProviderStatus{
+					Timestamp: now,
+				},
+			}
+
+			if err := k8sClient.Create(ctx, provider); err != nil {
+				return err
+			}
+
+			// Update status
+			provider.Status.Timestamp = now
+			if err := k8sClient.Status().Update(ctx, provider); err != nil {
+				setupLog.Error(err, "Failed to update provider status after creation")
+				// Don't fail if status update fails - the CR is created
+			}
+
+			setupLog.Info("Created new operator provider", "name", providerName)
+			return nil
+		}
+		return err
+	}
+
+	// Provider exists, update timestamp
+	provider.Status.Timestamp = now
+	if err := k8sClient.Status().Update(ctx, provider); err != nil {
+		return err
+	}
+
+	setupLog.Info("Updated operator provider timestamp", "name", providerName)
+	return nil
 }
 
 // nolint:gocyclo
@@ -204,14 +321,50 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Determine the namespace
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "krkn-operator-acm-system" // Default namespace
+	}
+
+	// Use default operator name for controller setup
+	// Note: ConfigMap reading requires the manager cache to be started,
+	// so we use the default name here. The operator name can be customized
+	// via ConfigMap for multi-operator scenarios.
+	operatorName := os.Getenv("OPERATOR_NAME")
+	if operatorName == "" {
+		operatorName = "krkn-operator-acm" // Default
+	}
+	setupLog.Info("Using operator name", "operator-name", operatorName, "namespace", namespace)
+
 	if err := (&controller.KrknTargetRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorName:      operatorName,
+		OperatorNamespace: namespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KrknTargetRequest")
 		os.Exit(1)
 	}
+	if err := (&controller.KrknOperatorTargetProviderReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorNamespace: namespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "KrknOperatorTargetProvider")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
+
+	// Add a readiness check that ensures the operator registered successfully
+	if err := mgr.Add(&ProviderRegistrationRunnable{
+		Client:       mgr.GetClient(),
+		Namespace:    namespace,
+		OperatorName: operatorName,
+	}); err != nil {
+		setupLog.Error(err, "unable to add provider registration check")
+		os.Exit(1)
+	}
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")

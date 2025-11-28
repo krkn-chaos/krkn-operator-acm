@@ -1,3 +1,4 @@
+
 # Development Progress Tracker
 
 <!-- Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929) -->
@@ -118,3 +119,133 @@ All core phases (1-7) have been completed:
 
 - Reference sample data: `misc/managed-cluster.json`
 - CRD typo in requirements: `caBunble` should likely be `caBundle`
+
+---
+
+# REFACTORING (28/11) - Multi-Operator Support
+
+## Phase 10: KrknOperatorTargetProvider CRD
+
+- [x] Create `KrknOperatorTargetProvider` CRD with fields:
+  - [x] `operator-name` (string) - unique identifier for the operator
+  - [x] `timestamp` (timestamp) - last heartbeat/update time
+- [x] Generate CRD manifests for KrknOperatorTargetProvider
+- [x] Add RBAC permissions for the new CRD
+
+## Phase 11: Operator Registration & Configuration
+
+- [x] Create ConfigMap for operator configuration:
+  - [x] Define ConfigMap structure with `operator-name` field
+  - [x] Create sample ConfigMap in `config/samples/`
+  - [x] Document ConfigMap fields for future expansion
+- [x] Implement ConfigMap reading logic:
+  - [x] Read operator-name from ConfigMap at startup
+  - [x] Make ConfigMap accessible throughout reconcile loop
+  - [x] Add error handling for missing ConfigMap
+- [x] Implement operator registration at boot:
+  - [x] Check if KrknOperatorTargetProvider CR exists with operator-name
+  - [x] Create new CR if not exists
+  - [x] Update timestamp if CR already exists
+  - [x] Add reconcile logic for keeping registration up-to-date
+
+## Phase 12: Timestamp Management
+
+- [x] Add timestamp fields to KrknTargetRequest:
+  - [x] `created` (timestamp) - when CR was created
+  - [x] `completed` (timestamp) - when processing completed
+- [x] Update CRD with new timestamp fields
+- [x] Implement timestamp setting logic:
+  - [x] Set `created` when status is initialized to "pending"
+  - [x] Set `completed` when status changes to "Completed"
+
+## Phase 13: Multi-Operator TargetData Structure
+
+- [x] Refactor `KrknTargetRequestStatus.TargetData`:
+  - [x] Change from `[]ClusterTarget` to `map[string][]ClusterTarget`
+  - [x] Key: operator-name
+  - [x] Value: array of ClusterTarget for that operator
+- [x] Update controller logic:
+  - [x] Read operator-name from ConfigMap
+  - [x] Set targetData using operator-name as key
+  - [x] Handle merging with existing targetData from other operators
+- [x] Update CRD manifests with new structure
+- [x] Update sample CRs to reflect new structure
+
+## Phase 14: Secret Data Structure Refactoring
+
+- [x] Update Secret data structure:
+  - [x] Change `.data.managed-clusters` to support multi-operator format
+  - [x] Structure: `map[operator-name]map[cluster-name]ClusterData`
+  - [x] Backward compatibility with old format (auto-migration)
+- [x] Update secret creation logic:
+  - [x] Read existing secret if present
+  - [x] Merge new operator data with existing data
+  - [x] Preserve data from other operators
+- [x] Update secret reading/verification logic
+
+## Phase 15: Multi-Operator Completion Logic
+
+- [x] Implement provider counting:
+  - [x] List all KrknOperatorTargetProvider CRs in reconcile loop
+  - [x] Count active providers
+  - [x] Log provider count for debugging
+- [x] Update completion logic:
+  - [x] Check if number of keys in TargetData map equals provider count
+  - [x] Only set status to "Completed" when all providers have contributed
+  - [x] Handle edge cases (providers disappearing, etc.)
+
+## Phase 16: Testing Multi-Operator Scenario
+
+- [ ] Create test setup:
+  - [ ] Multiple ConfigMaps with different operator names
+  - [ ] Multiple operator instances
+  - [ ] Single KrknTargetRequest
+- [ ] Test scenarios:
+  - [ ] Single operator (backward compatibility)
+  - [ ] Two operators contributing to same request
+  - [ ] Provider registration and heartbeat
+  - [ ] Completion logic with multiple providers
+- [ ] Validate data integrity:
+  - [ ] Each operator's data isolated correctly
+  - [ ] Secret contains all operator data
+  - [ ] Status reflects all contributions
+
+## Phase 17: Documentation Update
+
+- [ ] Update README with:
+  - [ ] Multi-operator architecture explanation
+  - [ ] ConfigMap configuration guide
+  - [ ] Provider registration mechanism
+- [ ] Update DEPLOYMENT.md with:
+  - [ ] ConfigMap deployment steps
+  - [ ] Multi-operator deployment example
+- [ ] Create migration guide:
+  - [ ] How to migrate from single to multi-operator
+  - [ ] Breaking changes documentation
+
+---
+
+## Refactoring Status
+
+**Phase:** Phases 10-15 Complete - Multi-Operator Core Implementation Done
+**Last Updated:** 2025-11-28
+**Priority:** High - Multi-operator support is critical for scalability
+
+### Key Architectural Changes:
+
+1. **New CRD**: `KrknOperatorTargetProvider` for operator registration
+2. **Configuration**: ConfigMap-based operator configuration
+3. **Data Structure**: Map-based TargetData to support multiple operators
+4. **Completion Logic**: Dynamic completion based on registered provider count
+5. **Timestamps**: Track CR lifecycle with created/completed timestamps
+
+### Implementation Order:
+
+1. Create KrknOperatorTargetProvider CRD (Phase 10)
+2. Add ConfigMap support (Phase 11)
+3. Add timestamps to KrknTargetRequest (Phase 12)
+4. Refactor TargetData structure (Phase 13)
+5. Update Secret structure (Phase 14)
+6. Implement new completion logic (Phase 15)
+7. Test multi-operator scenarios (Phase 16)
+8. Update documentation (Phase 17)

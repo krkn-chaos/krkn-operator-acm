@@ -1,0 +1,12 @@
+# Generated-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: krkn-operator-acm-system
+data:
+  operator-name: "krkn-operator-acm"
+  # Future configuration options can be added here
+  # For example:
+  # heartbeat-interval: "30s"
+  # timeout: "5m"

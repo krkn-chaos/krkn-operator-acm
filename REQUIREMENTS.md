@@ -28,6 +28,35 @@ once the operator receives the `KrknTargetRequest` the operator must:
   - cluster-name
   - cluster-api-url
 
+# Refactoring 28/11
+
+- I want to add a New CRD called KrknOperatorTargetProvider, the goal is to register the operator with its operator-name and a timestamp
+  At the operator boot, if the CR already exists with the same operator-name only the timestamp must be updated
+- The operator name must come from a config-map this, configmap will progressively contain many other options so must be reachable
+  from almost any place in the reconcile loop 
+- I want to add two timestamp to KrknTargetRequest one is `created` the other one is `completed` and they must be valorized
+  respectively when the CR is created and one when it's completed
+- I want to change both the CRD KrknTargetRequestStatus , the attribute TargetData []ClusterTarget must become a map[str][]ClusterTarget
+  where the key is the operator-name and the value are the targets associated with the operator itself, the aim is to allow multiple
+  operator with different data sources might set values on the same CR
+- I want to make the same change also in the json data structure in the Secret
+- on every reconcile loop the operator must list the number of 
+- 
+- I want that in the reconcile loop the status of the CR must be completed when the number of keys in the map[str][]ClusterTarget
+  
+- equals the number of KrknOperatorTargetProvider listed before
+
+# Refactoring 2 28/11
+
+- I want to add a field active bool al CRD KrknOperatorTargetProvider
+- I want the reconcile loop to count only the target provider that are Active == true
+- I want to add the operator namespace in the global configmap
+- I want to create a config object that is mapped in a methdo from the values contained in the configmap and returned from
+  that method, and I want to remove the single property collection methods like `getOperatorName`
+- check  the krkntargetrequest_controller.go line 133 `Requeue` is deprecated, find a solution.
+
+
+ 
 
 
   

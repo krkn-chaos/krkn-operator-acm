@@ -33,7 +33,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1"
 )
@@ -68,12 +70,15 @@ type ClusterData struct {
 // KrknTargetRequestReconciler reconciles a KrknTargetRequest object
 type KrknTargetRequestReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme            *runtime.Scheme
+	OperatorName      string
+	OperatorNamespace string
 }
 
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krkntargetrequests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krkntargetrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krkntargetrequests/finalizers,verbs=update
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviders,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
@@ -120,7 +125,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		// Update status
+		now := metav1.Now()
 		krknRequest.Status.Status = "pending"
+		krknRequest.Status.Created = &now
 		err = r.Status().Update(ctx, krknRequest)
 		if err != nil {
 			logger.Error(err, "Failed to initialize status")
@@ -220,9 +227,44 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	logger.Info("Created secret with managed clusters data", "secretName", krknRequest.Spec.UUID)
 
-	// Update KrknTargetRequest status
-	krknRequest.Status.Status = "Completed"
-	krknRequest.Status.TargetData = targetData
+	// Initialize TargetData map if nil
+	if krknRequest.Status.TargetData == nil {
+		krknRequest.Status.TargetData = make(map[string][]krknv1alpha1.ClusterTarget)
+	}
+
+	// Set target data for this operator
+	krknRequest.Status.TargetData[r.OperatorName] = targetData
+
+	logger.Info("Set target data for operator", "operator-name", r.OperatorName, "target-count", len(targetData))
+
+	// Count the number of registered KrknOperatorTargetProviders in the operator's namespace
+	providerList := &krknv1alpha1.KrknOperatorTargetProviderList{}
+	err = r.List(ctx, providerList, client.InNamespace(r.OperatorNamespace))
+	if err != nil {
+		logger.Error(err, "Failed to list KrknOperatorTargetProviders", "namespace", r.OperatorNamespace)
+		return ctrl.Result{}, err
+	}
+
+	providerCount := len(providerList.Items)
+	contributorCount := len(krknRequest.Status.TargetData)
+
+	logger.Info("Provider status",
+		"total-providers", providerCount,
+		"contributors", contributorCount,
+		"contributor-names", getMapKeys(krknRequest.Status.TargetData),
+		"provider-namespaces", getProviderNamespaces(providerList.Items))
+
+	// Check if all providers have contributed
+	if contributorCount >= providerCount && providerCount > 0 {
+		completedTime := metav1.Now()
+		krknRequest.Status.Status = "Completed"
+		krknRequest.Status.Completed = &completedTime
+		logger.Info("All providers have contributed, marking as Completed", "UUID", krknRequest.Spec.UUID)
+	} else {
+		logger.Info("Waiting for more providers to contribute",
+			"needed", providerCount,
+			"current", contributorCount)
+	}
 
 	err = r.Status().Update(ctx, krknRequest)
 	if err != nil {
@@ -230,7 +272,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully completed KrknTargetRequest", "UUID", krknRequest.Spec.UUID)
+	logger.Info("Successfully updated KrknTargetRequest", "UUID", krknRequest.Spec.UUID, "status", krknRequest.Status.Status)
 	return ctrl.Result{}, nil
 }
 
@@ -305,37 +347,76 @@ users:
 	return kubeconfig, nil
 }
 
-// createManagedClustersSecret creates a secret containing all managed clusters data
+// createManagedClustersSecret creates or updates a secret containing managed clusters data
+// The secret format is: map[operator-name]map[cluster-name]ClusterData
+// This allows multiple operators to contribute their cluster data without conflicts
 func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Context, uuid string, clustersData map[string]ClusterData) error {
-	// Convert clusters data to JSON
-	jsonData, err := json.Marshal(clustersData)
+	secretNamespace := r.OperatorNamespace
+	secretName := uuid
+
+	// Check if secret already exists
+	existingSecret := &corev1.Secret{}
+	getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNamespace}, existingSecret)
+
+	var allOperatorData map[string]map[string]ClusterData
+	secretExists := false
+
+	if getErr != nil {
+		if errors.IsNotFound(getErr) {
+			// Secret doesn't exist, create new structure
+			allOperatorData = make(map[string]map[string]ClusterData)
+			secretExists = false
+		} else {
+			return fmt.Errorf("failed to check if secret exists: %w", getErr)
+		}
+	} else {
+		// Secret exists, parse existing data
+		secretExists = true
+		existingData, ok := existingSecret.Data["managed-clusters"]
+		if ok && len(existingData) > 0 {
+			// Try to unmarshal as multi-operator format first
+			err := json.Unmarshal(existingData, &allOperatorData)
+			if err != nil {
+				// If that fails, try old format and migrate it
+				var oldFormatData map[string]ClusterData
+				err = json.Unmarshal(existingData, &oldFormatData)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal existing secret data: %w", err)
+				}
+				// Migrate old format: assume it came from an operator with default name
+				allOperatorData = map[string]map[string]ClusterData{
+					"krkn-operator-acm": oldFormatData,
+				}
+			}
+		} else {
+			allOperatorData = make(map[string]map[string]ClusterData)
+		}
+	}
+
+	// Add/update this operator's data
+	allOperatorData[r.OperatorName] = clustersData
+
+	// Marshal the complete multi-operator structure
+	jsonData, err := json.Marshal(allOperatorData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal clusters data: %w", err)
 	}
 
-	// Create the secret
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      uuid,
-			Namespace: "default",
+			Name:      secretName,
+			Namespace: secretNamespace,
 		},
 		Data: map[string][]byte{
 			"managed-clusters": jsonData,
 		},
 	}
 
-	// Check if secret already exists
-	existingSecret := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: uuid, Namespace: "default"}, existingSecret)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new secret
-			err = r.Create(ctx, secret)
-			if err != nil {
-				return fmt.Errorf("failed to create secret: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to check if secret exists: %w", err)
+	if !secretExists {
+		// Create new secret
+		err = r.Create(ctx, secret)
+		if err != nil {
+			return fmt.Errorf("failed to create secret: %w", err)
 		}
 	} else {
 		// Update existing secret
@@ -349,10 +430,47 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 	return nil
 }
 
+// getMapKeys returns a slice of keys from a map
+func getMapKeys(m map[string][]krknv1alpha1.ClusterTarget) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getProviderNamespaces returns a list of namespaces where providers are registered
+func getProviderNamespaces(providers []krknv1alpha1.KrknOperatorTargetProvider) []string {
+	namespaces := make([]string, 0, len(providers))
+	for _, p := range providers {
+		namespaces = append(namespaces, p.Namespace)
+	}
+	return namespaces
+}
+
+// NewNamespaceFilter creates a predicate that only allows events from a specific namespace
+func NewNamespaceFilter(namespace string) predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return e.Object.GetNamespace() == namespace
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectNew.GetNamespace() == namespace
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return e.Object.GetNamespace() == namespace
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return e.Object.GetNamespace() == namespace
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *KrknTargetRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&krknv1alpha1.KrknTargetRequest{}).
 		Named("krkntargetrequest").
+		WithEventFilter(NewNamespaceFilter(r.OperatorNamespace)).
 		Complete(r)
 }

@@ -7,6 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
   - namespaces
   verbs:
   - get
@@ -35,6 +36,7 @@ rules:
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
+  - krknoperatortargetproviders
   - krkntargetrequests
   verbs:
   - create
@@ -47,12 +49,14 @@ rules:
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
+  - krknoperatortargetproviders/finalizers
   - krkntargetrequests/finalizers
   verbs:
   - update
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
+  - krknoperatortargetproviders/status
   - krkntargetrequests/status
   verbs:
   - get

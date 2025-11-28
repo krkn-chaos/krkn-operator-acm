@@ -20,4 +20,9 @@ resources:
   kind: KrknTargetRequest
   path: github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1
   version: v1alpha1
+- controller: true
+  domain: krkn-chaos.dev
+  group: krkn
+  kind: KrknOperatorTargetProvider
+  version: v1alpha1
 version: "3"

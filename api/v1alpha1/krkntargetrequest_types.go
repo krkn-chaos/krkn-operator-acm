@@ -45,8 +45,13 @@ type KrknTargetRequestSpec struct {
 type KrknTargetRequestStatus struct {
 	// Status represents the current state of the request (pending, completed)
 	Status string `json:"status,omitempty"`
-	// TargetData contains the list of cluster targets
-	TargetData []ClusterTarget `json:"targetData,omitempty"`
+	// TargetData contains a map of operator-name to list of cluster targets
+	// This allows multiple operators to contribute their targets to the same request
+	TargetData map[string][]ClusterTarget `json:"targetData,omitempty"`
+	// Created is the timestamp when the CR was created and set to pending
+	Created *metav1.Time `json:"created,omitempty"`
+	// Completed is the timestamp when the CR was marked as completed
+	Completed *metav1.Time `json:"completed,omitempty"`
 }
 
 // +kubebuilder:object:root=true

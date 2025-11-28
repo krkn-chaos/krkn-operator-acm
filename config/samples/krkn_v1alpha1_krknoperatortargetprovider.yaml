@@ -1,0 +1,10 @@
+# Generated-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
+apiVersion: krkn.krkn-chaos.dev/v1alpha1
+kind: KrknOperatorTargetProvider
+metadata:
+  labels:
+    app.kubernetes.io/name: krkn-operator-acm
+    app.kubernetes.io/managed-by: kustomize
+  name: krknoperatortargetprovider-sample
+spec:
+  operator-name: "krkn-operator-acm"

@@ -1,4 +1,5 @@
 ## Append samples of your project ##
 resources:
 - krkn_v1alpha1_krkntargetrequest.yaml
+- krkn_v1alpha1_krknoperatortargetprovider.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
