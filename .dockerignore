@@ -1,3 +1,26 @@
 # More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
 # Ignore build and test binaries.
 bin/
+# Ignore test files
+test/
+testbin/
+# Ignore git files
+.git/
+.github/
+.gitignore
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+# Ignore documentation
+*.md
+LICENSE
+# Ignore config and other build artifacts
+config/
+dist/
+cover.out
+Dockerfile*
+Makefile
+.dockerignore
