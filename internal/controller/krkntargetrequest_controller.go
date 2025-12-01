@@ -40,6 +40,11 @@ import (
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1"
 )
 
+const (
+	// StatusCompleted represents a completed target request
+	StatusCompleted = "Completed"
+)
+
 // ManagedCluster represents an ACM managed cluster
 type ManagedCluster struct {
 	APIVersion string `json:"apiVersion"`
@@ -146,7 +151,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Check if the request is already completed
-	if krknRequest.Status.Status == "Completed" {
+	if krknRequest.Status.Status == StatusCompleted {
 		logger.Info("KrknTargetRequest already completed", "UUID", krknRequest.Spec.UUID)
 		return ctrl.Result{}, nil
 	}
@@ -170,7 +175,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Collect cluster data
 	clustersData := make(map[string]ClusterData)
-	var targetData []krknv1alpha1.ClusterTarget
+	targetData := make([]krknv1alpha1.ClusterTarget, 0, len(managedClusters.Items))
 
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
@@ -191,13 +196,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			continue
 		}
 
-		// Extract ca.crt and token from secret
-		caCrt, ok := secret.Data["ca.crt"]
-		if !ok {
-			logger.Error(fmt.Errorf("ca.crt not found in secret"), "Missing ca.crt", "cluster", clusterName)
-			continue
-		}
-
+		// Extract token from secret
 		token, ok := secret.Data["token"]
 		if !ok {
 			logger.Error(fmt.Errorf("token not found in secret"), "Missing token", "cluster", clusterName)
@@ -205,7 +204,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		// Generate kubeconfig
-		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, string(caCrt), string(token))
+		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, string(token))
 		if err != nil {
 			logger.Error(err, "Failed to generate kubeconfig", "cluster", clusterName)
 			continue
@@ -273,7 +272,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Check if all active providers have contributed
 	if contributorCount >= activeProviderCount && activeProviderCount > 0 {
 		completedTime := metav1.Now()
-		krknRequest.Status.Status = "Completed"
+		krknRequest.Status.Status = StatusCompleted
 		krknRequest.Status.Completed = &completedTime
 		logger.Info("All active providers have contributed, marking as Completed", "UUID", krknRequest.Spec.UUID)
 	} else {
@@ -343,7 +342,7 @@ func (r *KrknTargetRequestReconciler) getApplicationManagerSecret(ctx context.Co
 }
 
 // generateKubeconfig generates a kubeconfig for a managed cluster
-func (r *KrknTargetRequestReconciler) generateKubeconfig(clusterName, clusterURL, clusterCABundle, caCrt, token string) (string, error) {
+func (r *KrknTargetRequestReconciler) generateKubeconfig(clusterName, clusterURL, clusterCABundle, token string) (string, error) {
 	// Use the CA bundle from the managed cluster spec
 	kubeconfig := fmt.Sprintf(`apiVersion: v1
 kind: Config

@@ -1,7 +1,27 @@
 # Build the manager binary
 FROM golang:1.25 AS builder
 ARG TARGETOS
-
+Run golangci/golangci-lint-action@v8
+prepare environment
+run golangci-lint
+  Running [/home/runner/golangci-lint-2.6.2-linux-amd64/golangci-lint config path] in [/home/runner/work/krkn-operator-acm/krkn-operator-acm] ...
+  Running [/home/runner/golangci-lint-2.6.2-linux-amd64/golangci-lint config verify] in [/home/runner/work/krkn-operator-acm/krkn-operator-acm] ...
+  Running [/home/runner/golangci-lint-2.6.2-linux-amd64/golangci-lint run] in [/home/runner/work/krkn-operator-acm/krkn-operator-acm] ...
+  Error: internal/controller/krkntargetrequest_controller.go:149:34: string `Completed` has 5 occurrences, make it a constant (goconst)
+  	if krknRequest.Status.Status == "Completed" {
+  	                                ^
+  Error: internal/controller/krkntargetrequest_controller.go:173:2: Consider pre-allocating `targetData` (prealloc)
+  	var targetData []krknv1alpha1.ClusterTarget
+  	^
+  Error: internal/controller/krkntargetrequest_controller.go:346:100: (*KrknTargetRequestReconciler).generateKubeconfig - caCrt is unused (unparam)
+  func (r *KrknTargetRequestReconciler) generateKubeconfig(clusterName, clusterURL, clusterCABundle, caCrt, token string) (string, error) {
+                                                                                                     ^
+  3 issues:
+  * goconst: 1
+  * prealloc: 1
+  * unparam: 1
+  Error: issues found
+  Ran golangci-lint in 77261msù
 ARG TARGETARCH
 
 WORKDIR /workspace
