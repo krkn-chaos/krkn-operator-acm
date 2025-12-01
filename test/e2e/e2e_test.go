@@ -62,8 +62,19 @@ var _ = Describe("Manager", Ordered, func() {
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+		output, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs: %s", output)
+
+		By("verifying CRDs are installed")
+		Eventually(func(g Gomega) {
+			cmd = exec.Command("kubectl", "get", "crd", "krkntargetrequests.krkn.krkn-chaos.dev")
+			_, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "KrknTargetRequest CRD should be installed")
+
+			cmd = exec.Command("kubectl", "get", "crd", "krknoperatortargetproviders.krkn.krkn-chaos.dev")
+			_, err = utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred(), "KrknOperatorTargetProvider CRD should be installed")
+		}).Should(Succeed(), "CRDs should be installed and available")
 
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
