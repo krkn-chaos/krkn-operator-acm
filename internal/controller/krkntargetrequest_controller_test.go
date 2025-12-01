@@ -511,7 +511,10 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				}, testRequest)).To(Succeed())
 				Expect(testRequest.Status.Completed).NotTo(BeNil())
 				Expect(testRequest.Status.Created).NotTo(BeNil())
-				Expect(testRequest.Status.Completed.After(testRequest.Status.Created.Time)).To(BeTrue())
+				// metav1.Time timestamps are truncated to second precision by etcd,
+				// so we check that completed is not before created (i.e., >= created)
+				Expect(testRequest.Status.Created.Time.Before(testRequest.Status.Completed.Time) ||
+					testRequest.Status.Created.Time.Equal(testRequest.Status.Completed.Time)).To(BeTrue())
 			})
 		})
 

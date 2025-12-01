@@ -54,7 +54,9 @@ func Run(cmd *exec.Cmd) (string, error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(output), fmt.Errorf("%q failed with error %q: %w", command, string(output), err)
+		// Print full output to GinkgoWriter for debugging
+		_, _ = fmt.Fprintf(GinkgoWriter, "command failed with output:\n%s\n", string(output))
+		return string(output), fmt.Errorf("%q failed: %w", command, err)
 	}
 
 	return string(output), nil
