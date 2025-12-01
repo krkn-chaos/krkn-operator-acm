@@ -6,6 +6,7 @@ metadata:
   namespace: krkn-operator-acm-system
 data:
   operator-name: "krkn-operator-acm"
+  operator-namespace: "krkn-operator-acm-system"
   # Future configuration options can be added here
   # For example:
   # heartbeat-interval: "30s"

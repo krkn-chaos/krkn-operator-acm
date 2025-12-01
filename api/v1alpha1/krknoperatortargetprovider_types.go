@@ -26,6 +26,9 @@ import (
 type KrknOperatorTargetProviderSpec struct {
 	// OperatorName is the unique identifier for this operator instance
 	OperatorName string `json:"operator-name"`
+	// Active indicates whether this provider is actively contributing to target requests
+	// +kubebuilder:default=true
+	Active bool `json:"active"`
 }
 
 // KrknOperatorTargetProviderStatus defines the observed state of KrknOperatorTargetProvider.
@@ -37,6 +40,7 @@ type KrknOperatorTargetProviderStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Operator",type=string,JSONPath=`.spec.operator-name`
+// +kubebuilder:printcolumn:name="Active",type=boolean,JSONPath=`.spec.active`
 // +kubebuilder:printcolumn:name="Last Heartbeat",type=date,JSONPath=`.status.timestamp`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:resource:shortName=kotp

@@ -119,6 +119,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if needsLabelUpdate {
 			err = r.Update(ctx, krknRequest)
 			if err != nil {
+				if errors.IsConflict(err) {
+					logger.Info("Conflict updating labels, will retry")
+					return ctrl.Result{Requeue: true}, nil
+				}
 				logger.Error(err, "Failed to add UUID label")
 				return ctrl.Result{}, err
 			}
@@ -130,11 +134,15 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		krknRequest.Status.Created = &now
 		err = r.Status().Update(ctx, krknRequest)
 		if err != nil {
+			if errors.IsConflict(err) {
+				logger.Info("Conflict initializing status, will retry")
+				return ctrl.Result{Requeue: true}, nil
+			}
 			logger.Error(err, "Failed to initialize status")
 			return ctrl.Result{}, err
 		}
-		// Requeue to process in the next reconciliation
-		return ctrl.Result{Requeue: true}, nil
+		// Return empty result to allow natural reconciliation
+		return ctrl.Result{}, nil
 	}
 
 	// Check if the request is already completed
@@ -237,7 +245,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	logger.Info("Set target data for operator", "operator-name", r.OperatorName, "target-count", len(targetData))
 
-	// Count the number of registered KrknOperatorTargetProviders in the operator's namespace
+	// Count the number of active KrknOperatorTargetProviders in the operator's namespace
 	providerList := &krknv1alpha1.KrknOperatorTargetProviderList{}
 	err = r.List(ctx, providerList, client.InNamespace(r.OperatorNamespace))
 	if err != nil {
@@ -245,29 +253,41 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	providerCount := len(providerList.Items)
+	// Count only active providers
+	activeProviderCount := 0
+	for _, provider := range providerList.Items {
+		if provider.Spec.Active {
+			activeProviderCount++
+		}
+	}
+
 	contributorCount := len(krknRequest.Status.TargetData)
 
 	logger.Info("Provider status",
-		"total-providers", providerCount,
+		"total-providers", len(providerList.Items),
+		"active-providers", activeProviderCount,
 		"contributors", contributorCount,
 		"contributor-names", getMapKeys(krknRequest.Status.TargetData),
 		"provider-namespaces", getProviderNamespaces(providerList.Items))
 
-	// Check if all providers have contributed
-	if contributorCount >= providerCount && providerCount > 0 {
+	// Check if all active providers have contributed
+	if contributorCount >= activeProviderCount && activeProviderCount > 0 {
 		completedTime := metav1.Now()
 		krknRequest.Status.Status = "Completed"
 		krknRequest.Status.Completed = &completedTime
-		logger.Info("All providers have contributed, marking as Completed", "UUID", krknRequest.Spec.UUID)
+		logger.Info("All active providers have contributed, marking as Completed", "UUID", krknRequest.Spec.UUID)
 	} else {
 		logger.Info("Waiting for more providers to contribute",
-			"needed", providerCount,
+			"needed", activeProviderCount,
 			"current", contributorCount)
 	}
 
 	err = r.Status().Update(ctx, krknRequest)
 	if err != nil {
+		if errors.IsConflict(err) {
+			logger.Info("Conflict updating status, will retry", "UUID", krknRequest.Spec.UUID)
+			return ctrl.Result{Requeue: true}, nil
+		}
 		logger.Error(err, "Failed to update KrknTargetRequest status")
 		return ctrl.Result{}, err
 	}

@@ -1,25 +1,62 @@
 # krkn-operator-acm Deployment Guide
 
-<!-- Generated-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929) -->
+<!-- Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929) -->
+
+This guide covers deployment scenarios for krkn-operator-acm, including single-operator and multi-operator configurations.
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Single Operator Deployment](#single-operator-deployment)
+- [Multi-Operator Deployment](#multi-operator-deployment)
+- [Configuration](#configuration)
+- [Verification](#verification)
+- [Usage](#usage)
+- [Troubleshooting](#troubleshooting)
+- [Uninstallation](#uninstallation)
 
 ## Prerequisites
 
 - Kubernetes cluster with Red Hat Advanced Cluster Management (ACM) installed
-- kubectl configured to access the cluster
+- kubectl configured to access the cluster (cluster-admin recommended)
 - Cluster with managed clusters registered in ACM
 - Each managed cluster must have an `application-manager` secret in its namespace
+- Go 1.24.0+ and Docker 17.03+ (if building from source)
 
-## Installation Steps
+## Single Operator Deployment
 
-### 1. Install CRDs
+### Step 1: Install CRDs
 
 ```bash
 make install
 ```
 
-This will install the KrknTargetRequest CRD to your cluster.
+This installs:
+- `KrknTargetRequest` CRD
+- `KrknOperatorTargetProvider` CRD
 
-### 2. Deploy the Operator
+### Step 2: Create Operator ConfigMap
+
+Create a ConfigMap for operator configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: default
+data:
+  operator-name: "krkn-operator-acm"
+  operator-namespace: "default"
+```
+
+Apply the ConfigMap:
+
+```bash
+kubectl apply -f config/samples/operator-config.yaml
+```
+
+### Step 3: Deploy the Operator
 
 #### Option A: Run locally (for development)
 
@@ -30,19 +67,178 @@ make run
 #### Option B: Deploy to the cluster
 
 ```bash
-# Build and push the image (update IMG variable with your registry)
-make docker-build docker-push IMG=<your-registry>/krkn-operator-acm:latest
+# Build and push the image
+make docker-build docker-push IMG=<your-registry>/krkn-operator-acm:v1.0.0
 
 # Deploy to the cluster
-make deploy IMG=<your-registry>/krkn-operator-acm:latest
+make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0
 ```
 
-### 3. Verify Installation
-
-Check that the operator is running:
+### Step 4: Verify Installation
 
 ```bash
+# Check operator pods
 kubectl get pods -n krkn-operator-acm-system
+
+# Check operator registration
+kubectl get krknoperatortargetproviders
+```
+
+Expected output:
+```
+NAME                  OPERATORNAME         ACTIVE   TIMESTAMP
+krkn-operator-acm     krkn-operator-acm    true     2025-12-01T10:00:00Z
+```
+
+## Multi-Operator Deployment
+
+Deploy multiple operator instances to support different cluster management systems (ACM, Hypershift, etc.).
+
+### Architecture
+
+```
+┌────────────────────┐  ┌────────────────────┐
+│ Operator 1 (ACM)   │  │ Operator 2 (HCP)   │
+│ Namespace: op-acm  │  │ Namespace: op-hcp  │
+└────────┬───────────┘  └────────┬───────────┘
+         │                       │
+         └───────────────────────┘
+                     │
+         ┌───────────▼──────────┐
+         │  Shared Resources    │
+         │  - KrknTargetRequest │
+         │  - Secrets           │
+         └──────────────────────┘
+```
+
+### Deploy Operator 1 (ACM)
+
+```bash
+# Create namespace
+kubectl create namespace krkn-operator-acm-system
+
+# Create ConfigMap
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: krkn-operator-acm-system
+data:
+  operator-name: "krkn-operator-acm"
+  operator-namespace: "krkn-operator-acm-system"
+EOF
+
+# Deploy operator
+make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0 NAMESPACE=krkn-operator-acm-system
+```
+
+### Deploy Operator 2 (Custom/Hypershift)
+
+```bash
+# Create namespace
+kubectl create namespace krkn-operator-hcp-system
+
+# Create ConfigMap with unique operator-name
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: krkn-operator-hcp-system
+data:
+  operator-name: "krkn-operator-hcp"
+  operator-namespace: "krkn-operator-hcp-system"
+EOF
+
+# Deploy operator
+make deploy IMG=<your-registry>/krkn-operator-hcp:v1.0.0 NAMESPACE=krkn-operator-hcp-system
+```
+
+### Verify Multi-Operator Setup
+
+```bash
+# Check all registered providers
+kubectl get krknoperatortargetproviders
+
+# Expected output:
+# NAME                  OPERATORNAME         ACTIVE   TIMESTAMP
+# krkn-operator-acm     krkn-operator-acm    true     2025-12-01T10:00:00Z
+# krkn-operator-hcp     krkn-operator-hcp    true     2025-12-01T10:00:05Z
+```
+
+## Configuration
+
+### ConfigMap Structure
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: <operator-namespace>
+data:
+  # Required: Unique identifier for this operator
+  operator-name: "krkn-operator-<suffix>"
+
+  # Required: Namespace where operator manages resources
+  operator-namespace: "<operator-namespace>"
+```
+
+### Important Notes
+
+- **Unique Names**: Each operator MUST have a unique `operator-name`
+- **ConfigMap Name**: Must be exactly `krkn-operator-config`
+- **Namespace**: ConfigMap must be in the same namespace as the operator deployment
+- **Active State**: Providers can be marked inactive without undeployment
+
+### Managing Provider State
+
+```bash
+# Mark a provider as inactive (won't be counted for completion)
+kubectl patch krknoperatortargetprovider krkn-operator-acm \
+  --type='json' -p='[{"op": "replace", "path": "/spec/active", "value":false}]'
+
+# Reactivate a provider
+kubectl patch krknoperatortargetprovider krkn-operator-acm \
+  --type='json' -p='[{"op": "replace", "path": "/spec/active", "value":true}]'
+```
+
+## Verification
+
+### Health Checks
+
+```bash
+# Check all operators
+kubectl get pods -A | grep krkn-operator
+
+# Check provider registrations
+kubectl get krknoperatortargetproviders -o wide
+
+# View operator logs
+kubectl logs -n <namespace> deployment/krkn-operator-acm-controller-manager
+```
+
+### Test Request
+
+```bash
+# Create test request
+cat <<EOF | kubectl apply -f -
+apiVersion: krkn.krkn-chaos.dev/v1alpha1
+kind: KrknTargetRequest
+metadata:
+  name: test-request
+  namespace: default
+spec:
+  uuid: "test-123"
+EOF
+
+# Wait for completion
+kubectl wait --for=jsonpath='{.status.status}'=Completed \
+  krkntargetrequest/test-request --timeout=120s
+
+# View results
+kubectl get krkntargetrequest test-request -o yaml
 ```
 
 ## Usage

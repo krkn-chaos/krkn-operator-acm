@@ -1,0 +1,10 @@
+# Test ConfigMap for second operator instance
+# This simulates a different operator contributing to the same KrknTargetRequest
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config-test2
+  namespace: krkn-operator-acm-system
+data:
+  operator-name: "krkn-operator-test2"
+  operator-namespace: "krkn-operator-acm-system"

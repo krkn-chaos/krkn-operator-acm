@@ -20,6 +20,9 @@ spec:
     - jsonPath: .spec.operator-name
       name: Operator
       type: string
+    - jsonPath: .spec.active
+      name: Active
+      type: boolean
     - jsonPath: .status.timestamp
       name: Last Heartbeat
       type: date
@@ -53,11 +56,17 @@ spec:
             description: KrknOperatorTargetProviderSpec defines the desired state
               of KrknOperatorTargetProvider.
             properties:
+              active:
+                default: true
+                description: Active indicates whether this provider is actively contributing
+                  to target requests
+                type: boolean
               operator-name:
                 description: OperatorName is the unique identifier for this operator
                   instance
                 type: string
             required:
+            - active
             - operator-name
             type: object
           status:

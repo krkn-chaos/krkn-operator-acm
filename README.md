@@ -83,14 +83,17 @@ status:
 # View the updated request
 kubectl get krkntargetrequest chaos-test-1 -o yaml
 
-# Example output:
+# Example output (multi-operator):
 # status:
 #   status: Completed
+#   created: "2025-12-01T10:00:00Z"
+#   completed: "2025-12-01T10:01:30Z"
 #   targetData:
-#   - cluster-name: local-cluster
-#     cluster-api-url: https://api.acm-hub-krkn.aws.rhperfscale.org:6443
-#   - cluster-name: managed-cluster-krkn
-#     cluster-api-url: https://api.acm-managed-krkn.aws.rhperfscale.org:6443
+#     krkn-operator-acm:
+#     - cluster-name: local-cluster
+#       cluster-api-url: https://api.acm-hub-krkn.aws.rhperfscale.org:6443
+#     - cluster-name: managed-cluster-krkn
+#       cluster-api-url: https://api.acm-managed-krkn.aws.rhperfscale.org:6443
 
 # Retrieve the secret
 kubectl get secret chaos-test-uuid-001 -o jsonpath='{.data.managed-clusters}' | base64 -d | jq .
@@ -99,9 +102,9 @@ kubectl get secret chaos-test-uuid-001 -o jsonpath='{.data.managed-clusters}' | 
 4. **Use the kubeconfigs** for chaos testing:
 
 ```bash
-# Extract a specific cluster's kubeconfig
+# Extract a specific cluster's kubeconfig from multi-operator format
 kubectl get secret chaos-test-uuid-001 -o jsonpath='{.data.managed-clusters}' | \
-  base64 -d | jq -r '.["local-cluster"].kubeconfig' | base64 -d > local-cluster.kubeconfig
+  base64 -d | jq -r '.["krkn-operator-acm"]["local-cluster"].kubeconfig' | base64 -d > local-cluster.kubeconfig
 
 # Test access
 KUBECONFIG=local-cluster.kubeconfig kubectl get nodes
@@ -109,7 +112,66 @@ KUBECONFIG=local-cluster.kubeconfig kubectl get nodes
 
 ## Architecture
 
-### Custom Resource Definition (CRD)
+### Multi-Operator Support
+
+The krkn-operator-acm supports running multiple operator instances simultaneously, each targeting different cluster management systems (ACM, Hypershift, etc.). This architecture allows for:
+
+- **Horizontal Scalability**: Multiple operators can process the same KrknTargetRequest
+- **Provider Diversity**: Different operators can contribute cluster data from different sources
+- **Dynamic Completion**: Requests only complete when all active providers have contributed
+
+#### Key Components
+
+1. **KrknOperatorTargetProvider CRD**: Registers each operator instance and tracks its active state
+2. **ConfigMap-based Configuration**: Each operator reads its configuration from a ConfigMap
+3. **Coordinated Completion**: Requests complete only when data from all active providers is collected
+
+#### How Multi-Operator Works
+
+```
+┌─────────────────────┐    ┌─────────────────────┐
+│ Operator 1 (ACM)    │    │ Operator 2 (HCP)    │
+│ Registers as        │    │ Registers as        │
+│ "krkn-operator-acm" │    │ "krkn-operator-hcp" │
+└──────────┬──────────┘    └──────────┬──────────┘
+           │                           │
+           v                           v
+      ┌────────────────────────────────────┐
+      │ KrknOperatorTargetProvider CRDs    │
+      │ - krkn-operator-acm (active: true) │
+      │ - krkn-operator-hcp (active: true) │
+      └────────────────┬───────────────────┘
+                       │
+                       v
+           ┌────────────────────┐
+           │ KrknTargetRequest  │
+           │ (status: pending)  │
+           └───────┬────────────┘
+                   │
+      ┌────────────┴────────────┐
+      v                         v
+┌──────────┐            ┌──────────┐
+│ Op1 adds │            │ Op2 adds │
+│ ACM data │            │ HCP data │
+└────┬─────┘            └─────┬────┘
+     │                        │
+     └────────────┬───────────┘
+                  v
+      ┌─────────────────────┐
+      │ targetData:         │
+      │  krkn-operator-acm: │
+      │    - cluster1       │
+      │  krkn-operator-hcp: │
+      │    - cluster2       │
+      └──────────┬──────────┘
+                 v
+      ┌─────────────────────┐
+      │ status: Completed   │
+      │ (2/2 providers)     │
+      └─────────────────────┘
+```
+
+### Custom Resource Definitions (CRDs)
 
 **KrknTargetRequest** (`krkn.krkn-chaos.dev/v1alpha1`):
 
@@ -117,18 +179,57 @@ KUBECONFIG=local-cluster.kubeconfig kubectl get nodes
   - `uuid` (string): Unique identifier for the request
 - **Status**:
   - `status` (string): Current state - "pending" or "Completed"
-  - `targetData` (array): List of discovered clusters with name and API URL
+  - `created` (timestamp): When the request was created
+  - `completed` (timestamp): When all providers finished processing
+  - `targetData` (map[string][]ClusterTarget): Cluster data organized by operator name
+    - Key: operator-name (e.g., "krkn-operator-acm")
+    - Value: Array of cluster targets from that operator
+
+**KrknOperatorTargetProvider** (`krkn.krkn-chaos.dev/v1alpha1`):
+
+- **Spec**:
+  - `operatorName` (string): Unique identifier for this operator instance
+  - `active` (bool): Whether this provider should be counted for completion logic
+  - `timestamp` (timestamp): Last heartbeat/registration time
+
+### Configuration
+
+Each operator instance requires a ConfigMap for configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krkn-operator-config
+  namespace: default
+data:
+  operator-name: "krkn-operator-acm"
+  operator-namespace: "default"
+```
+
+**Configuration Fields**:
+- `operator-name`: Unique identifier used in targetData keys and provider registration
+- `operator-namespace`: Namespace where the operator manages resources
 
 ### Secret Structure
 
-The operator creates a secret with the following structure:
+The operator creates a secret with multi-operator support:
 
 ```json
 {
-  "<cluster-name>": {
-    "cluster-name": "local-cluster",
-    "cluster-api": "https://api.example.com:6443",
-    "kubeconfig": "<base64-encoded-kubeconfig>"
+  "krkn-operator-acm": {
+    "cluster1": {
+      "cluster-name": "local-cluster",
+      "cluster-api": "https://api.example.com:6443",
+      "kubeconfig": "<base64-encoded-kubeconfig>"
+    }
+  },
+  "krkn-operator-hcp": {
+    "cluster2": {
+      "cluster-name": "hcp-cluster",
+      "cluster-api": "https://api.hcp.example.com:6443",
+      "kubeconfig": "<base64-encoded-kubeconfig>"
+    }
   }
 }
 ```
@@ -138,8 +239,10 @@ The operator creates a secret with the following structure:
 The operator requires:
 - Read access to ACM ManagedCluster resources
 - Read access to application-manager secrets in cluster namespaces
-- Create/update access to secrets in the default namespace
+- Create/update access to secrets in the operator namespace
 - Full access to KrknTargetRequest CRs
+- Full access to KrknOperatorTargetProvider CRs
+- Read access to ConfigMaps in the operator namespace
 
 ## Getting Started
 
