@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	krknv1alpha1 "github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1"
+	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 )
 
 var _ = Describe("KrknTargetRequest Controller", func() {

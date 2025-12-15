@@ -45,8 +45,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	krknv1alpha1 "github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1"
 	"github.com/krkn-chaos/krkn-operator-acm/internal/controller"
+	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 

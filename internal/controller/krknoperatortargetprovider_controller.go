@@ -28,7 +28,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	krknv1alpha1 "github.com/krkn-chaos/krkn-operator-acm/api/v1alpha1"
+	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 )
 
 // KrknOperatorTargetProviderReconciler reconciles a KrknOperatorTargetProvider object
