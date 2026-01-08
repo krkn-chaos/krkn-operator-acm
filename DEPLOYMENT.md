@@ -78,7 +78,7 @@ make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0
 
 ```bash
 # Check operator pods
-kubectl get pods -n krkn-operator-acm-system
+kubectl get pods -n krkn-operator-system
 
 # Check operator registration
 kubectl get krknoperatortargetproviders
@@ -115,7 +115,7 @@ Deploy multiple operator instances to support different cluster management syste
 
 ```bash
 # Create namespace
-kubectl create namespace krkn-operator-acm-system
+kubectl create namespace krkn-operator-system
 
 # Create ConfigMap
 cat <<EOF | kubectl apply -f -
@@ -123,14 +123,14 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: krkn-operator-config
-  namespace: krkn-operator-acm-system
+  namespace: krkn-operator-system
 data:
   operator-name: "krkn-operator-acm"
-  operator-namespace: "krkn-operator-acm-system"
+  operator-namespace: "krkn-operator-system"
 EOF
 
 # Deploy operator
-make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0 NAMESPACE=krkn-operator-acm-system
+make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0 NAMESPACE=krkn-operator-system
 ```
 
 ### Deploy Operator 2 (Custom/Hypershift)
@@ -333,7 +333,7 @@ These permissions are automatically configured in `config/rbac/role.yaml`.
 
 1. Check operator logs:
 ```bash
-kubectl logs -n krkn-operator-acm-system deployment/krkn-operator-acm-controller-manager
+kubectl logs -n krkn-operator-system deployment/krkn-operator-acm-controller-manager
 ```
 
 2. Verify the KrknTargetRequest status is "pending"

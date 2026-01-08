@@ -8,7 +8,7 @@ export KUBECONFIG=/Users/tsebasti/Scrap/acm-hub-krkn/auth/kubeconfig
 UUID="${1:-test-$(date +%s)}"
 
 # Operator namespace - change this if your operator runs in a different namespace
-NAMESPACE="${2:-krkn-operator-acm-system}"
+NAMESPACE="${2:-krkn-operator-system}"
 
 echo "Creating KrknTargetRequest with UUID: $UUID in namespace: $NAMESPACE"
 echo ""

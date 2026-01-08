@@ -74,10 +74,10 @@ Tests that only active providers are counted for completion.
 ./create_test_request.sh test-single
 
 # Check the request
-kubectl get ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-single
+kubectl get ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-single
 
 # Should show status: Completed
-kubectl get ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-single -o jsonpath='{.items[0].status.status}'
+kubectl get ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-single -o jsonpath='{.items[0].status.status}'
 ```
 
 ### Test 2: Simulate Two Operators
@@ -88,7 +88,7 @@ apiVersion: krkn.krkn-chaos.dev/v1alpha1
 kind: KrknOperatorTargetProvider
 metadata:
   name: krkn-operator-test2
-  namespace: krkn-operator-acm-system
+  namespace: krkn-operator-system
 spec:
   operator-name: "krkn-operator-test2"
   active: true
@@ -100,11 +100,11 @@ EOF
 ./create_test_request.sh test-multi
 
 # Check status - should be "pending" with 1 contributor
-kubectl get ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-multi -o yaml
+kubectl get ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-multi -o yaml
 
 # Manually add second operator's data to simulate second operator contribution
 # This demonstrates the data structure
-kubectl patch ktr request-test-multi -n krkn-operator-acm-system --type=merge -p '{
+kubectl patch ktr request-test-multi -n krkn-operator-system --type=merge -p '{
   "status": {
     "targetData": {
       "krkn-operator-test2": [
@@ -124,7 +124,7 @@ kubectl patch ktr request-test-multi -n krkn-operator-acm-system --type=merge -p
 ### Test 3: Active/Inactive Providers
 ```bash
 # Set second provider to inactive
-kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-acm-system --type=merge -p '{"spec":{"active":false}}'
+kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-system --type=merge -p '{"spec":{"active":false}}'
 
 # Create new request - should complete with just one active provider
 ./create_test_request.sh test-active-only
@@ -133,7 +133,7 @@ kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-ac
 # Request should complete immediately
 
 # Cleanup - set back to active
-kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-acm-system --type=merge -p '{"spec":{"active":true}}'
+kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-system --type=merge -p '{"spec":{"active":true}}'
 ```
 
 ## Validation Checklist
@@ -164,15 +164,15 @@ kubectl patch krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-ac
 ## Cleanup
 ```bash
 # Remove test provider
-kubectl delete krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-acm-system
+kubectl delete krknoperatortargetprovider krkn-operator-test2 -n krkn-operator-system
 
 # Remove test requests
-kubectl delete ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-single
-kubectl delete ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-multi
-kubectl delete ktr -n krkn-operator-acm-system -l krkn.krkn-chaos.dev/uuid=test-active-only
+kubectl delete ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-single
+kubectl delete ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-multi
+kubectl delete ktr -n krkn-operator-system -l krkn.krkn-chaos.dev/uuid=test-active-only
 
 # Remove test secrets
-kubectl delete secret test-single -n krkn-operator-acm-system
-kubectl delete secret test-multi -n krkn-operator-acm-system
-kubectl delete secret test-active-only -n krkn-operator-acm-system
+kubectl delete secret test-single -n krkn-operator-system
+kubectl delete secret test-multi -n krkn-operator-system
+kubectl delete secret test-active-only -n krkn-operator-system
 ```

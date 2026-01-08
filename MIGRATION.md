@@ -153,10 +153,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: krkn-operator-config
-  namespace: krkn-operator-acm-system
+  namespace: krkn-operator-system
 data:
   operator-name: "krkn-operator-acm"
-  operator-namespace: "krkn-operator-acm-system"
+  operator-namespace: "krkn-operator-system"
 EOF
 ```
 
@@ -465,7 +465,7 @@ kubectl apply -f config/samples/operator-config.yaml
 kubectl get krknoperatortargetproviders
 
 # If none, restart operator
-kubectl rollout restart deployment/krkn-operator-acm-controller-manager -n krkn-operator-acm-system
+kubectl rollout restart deployment/krkn-operator-acm-controller-manager -n krkn-operator-system
 ```
 
 ### Issue 3: Secret Structure Mismatch

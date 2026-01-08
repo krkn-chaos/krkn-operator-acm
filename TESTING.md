@@ -217,10 +217,10 @@ export KUBECONFIG=/Users/tsebasti/Scrap/acm-hub-krkn/auth/kubeconfig
 make deploy IMG=<your-registry>/krkn-operator-acm:test
 
 # Check operator pod
-kubectl get pods -n krkn-operator-acm-system
+kubectl get pods -n krkn-operator-system
 
 # View logs
-kubectl logs -n krkn-operator-acm-system deployment/krkn-operator-acm-controller-manager -f
+kubectl logs -n krkn-operator-system deployment/krkn-operator-acm-controller-manager -f
 ```
 
 ## Cleanup

@@ -31,7 +31,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "krkn-operator-acm-system"
+const namespace = "krkn-operator-system"
 
 // serviceAccountName created for the project
 const serviceAccountName = "krkn-operator-acm-controller-manager"

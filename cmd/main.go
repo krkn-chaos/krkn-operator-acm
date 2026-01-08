@@ -379,7 +379,7 @@ func main() {
 	// Determine default namespace from environment
 	defaultNamespace := os.Getenv("POD_NAMESPACE")
 	if defaultNamespace == "" {
-		defaultNamespace = "krkn-operator-acm-system" // Default namespace
+		defaultNamespace = "krkn-operator-system" // Default namespace
 	}
 
 	// Create reconcilers with placeholder values (will be updated by ConfigAndRegistrationRunnable)
