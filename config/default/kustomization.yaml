@@ -1,5 +1,5 @@
 # Adds namespace to all resources.
-namespace: krkn-operator-acm-system
+namespace: krkn-operator-system
 
 # Value of this field is prepended to the
 # names of all resources, e.g. a deployment named
@@ -15,7 +15,6 @@ namePrefix: krkn-operator-acm-
 #    someName: someValue
 
 resources:
-- ../crd
 - ../rbac
 - ../manager
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
@@ -232,3 +231,5 @@ patches:
 #     fieldPath: .metadata.name
 #   targets: # Do not remove or uncomment the following scaffold marker; required to generate code for target CRD.
 # +kubebuilder:scaffold:crdkustomizecainjectionname
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
