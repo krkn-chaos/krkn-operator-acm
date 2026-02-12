@@ -25,7 +25,15 @@ This guide covers deployment scenarios for krkn-operator-acm, including single-o
 
 ## Single Operator Deployment
 
-### Step 1: Install CRDs
+### Step 1: Create Namespace
+
+**IMPORTANT:** The namespace must be created manually before deployment to prevent accidental deletion during undeploy.
+
+```bash
+kubectl create namespace krkn-operator-system
+```
+
+### Step 2: Install CRDs
 
 ```bash
 make install
@@ -35,7 +43,7 @@ This installs:
 - `KrknTargetRequest` CRD
 - `KrknOperatorTargetProvider` CRD
 
-### Step 2: Create Operator ConfigMap
+### Step 3: Create Operator ConfigMap
 
 Create a ConfigMap for operator configuration:
 
@@ -44,10 +52,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: krkn-operator-config
-  namespace: default
+  namespace: krkn-operator-system
 data:
   operator-name: "krkn-operator-acm"
-  operator-namespace: "default"
+  operator-namespace: "krkn-operator-system"
 ```
 
 Apply the ConfigMap:
@@ -56,7 +64,9 @@ Apply the ConfigMap:
 kubectl apply -f config/samples/operator-config.yaml
 ```
 
-### Step 3: Deploy the Operator
+### Step 4: Deploy the Operator
+
+**Note:** `make deploy` will verify that the namespace exists before proceeding. If the namespace doesn't exist, you'll get an error with instructions.
 
 #### Option A: Run locally (for development)
 
@@ -74,14 +84,22 @@ make docker-build docker-push IMG=<your-registry>/krkn-operator-acm:v1.0.0
 make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0
 ```
 
-### Step 4: Verify Installation
+Expected output:
+```
+Checking if namespace krkn-operator-system exists...
+✓ Namespace exists, proceeding with deployment...
+[deployment output...]
+✓ Deployment complete!
+```
+
+### Step 5: Verify Installation
 
 ```bash
 # Check operator pods
 kubectl get pods -n krkn-operator-system
 
 # Check operator registration
-kubectl get krknoperatortargetproviders
+kubectl get krknoperatortargetproviders -n krkn-operator-system
 ```
 
 Expected output:
@@ -89,6 +107,13 @@ Expected output:
 NAME                  OPERATORNAME         ACTIVE   TIMESTAMP
 krkn-operator-acm     krkn-operator-acm    true     2025-12-01T10:00:00Z
 ```
+
+### Important Notes on Namespace Management
+
+- **Namespace is NOT managed by the operator deployment** - This prevents accidental deletion when running `make undeploy`
+- **The namespace must be created manually** before the first deployment
+- **Multiple operators can share the same namespace** (`krkn-operator-system`) safely
+- **Undeploy preserves the namespace** and any other operators running in it
 
 ## Multi-Operator Deployment
 
@@ -114,10 +139,10 @@ Deploy multiple operator instances to support different cluster management syste
 ### Deploy Operator 1 (ACM)
 
 ```bash
-# Create namespace
+# Create shared namespace (if not already created)
 kubectl create namespace krkn-operator-system
 
-# Create ConfigMap
+# Create ConfigMap for krkn-operator-acm
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -130,42 +155,60 @@ data:
 EOF
 
 # Deploy operator
-make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0 NAMESPACE=krkn-operator-system
+cd /path/to/krkn-operator-acm
+make deploy IMG=<your-registry>/krkn-operator-acm:v1.0.0
 ```
 
-### Deploy Operator 2 (Custom/Hypershift)
+### Deploy Operator 2 (Base krkn-operator)
+
+Both operators can share the same namespace `krkn-operator-system`.
 
 ```bash
-# Create namespace
-kubectl create namespace krkn-operator-hcp-system
+# Namespace already exists from step 1, no need to create it again
 
-# Create ConfigMap with unique operator-name
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: krkn-operator-config
-  namespace: krkn-operator-hcp-system
-data:
-  operator-name: "krkn-operator-hcp"
-  operator-namespace: "krkn-operator-hcp-system"
-EOF
-
-# Deploy operator
-make deploy IMG=<your-registry>/krkn-operator-hcp:v1.0.0 NAMESPACE=krkn-operator-hcp-system
+# Deploy krkn-operator (uses its own ConfigMap)
+cd /path/to/krkn-operator
+make deploy IMG=<your-registry>/krkn-operator:latest
 ```
+
+**Note:** Each operator deployment will check that the namespace exists before proceeding.
 
 ### Verify Multi-Operator Setup
 
 ```bash
+# Check all pods in the shared namespace
+kubectl get pods -n krkn-operator-system
+
+# Expected output:
+# NAME                                                   READY   STATUS    RESTARTS   AGE
+# krkn-operator-controller-manager-xxx                   2/2     Running   0          5m
+# krkn-operator-acm-controller-manager-xxx               1/1     Running   0          2m
+
 # Check all registered providers
-kubectl get krknoperatortargetproviders
+kubectl get krknoperatortargetproviders -n krkn-operator-system
 
 # Expected output:
 # NAME                  OPERATORNAME         ACTIVE   TIMESTAMP
 # krkn-operator-acm     krkn-operator-acm    true     2025-12-01T10:00:00Z
-# krkn-operator-hcp     krkn-operator-hcp    true     2025-12-01T10:00:05Z
+# krkn-operator         krkn-operator        true     2025-12-01T10:00:05Z
 ```
+
+### Undeploy One Operator (Safe)
+
+You can safely undeploy one operator without affecting the other:
+
+```bash
+# Undeploy only krkn-operator-acm
+cd /path/to/krkn-operator-acm
+make undeploy
+
+# Verify krkn-operator is still running
+kubectl get pods -n krkn-operator-system
+# NAME                                                   READY   STATUS    RESTARTS   AGE
+# krkn-operator-controller-manager-xxx                   2/2     Running   0          10m
+```
+
+The namespace and the other operator remain intact!
 
 ## Configuration
 
@@ -357,9 +400,18 @@ kubectl get clusterrole krkn-operator-acm-manager-role -o yaml
 ## Uninstallation
 
 ```bash
-# Delete the operator deployment
+# Delete the operator deployment (preserves namespace and other operators)
 make undeploy
 
-# Remove CRDs
+# Remove CRDs (only if no other operators need them)
 make uninstall
+
+# Optional: Delete the namespace (only if no operators are running in it)
+kubectl delete namespace krkn-operator-system
 ```
+
+**Important:**
+- `make undeploy` removes ONLY the `krkn-operator-acm` resources (deployment, service, RBAC)
+- The namespace `krkn-operator-system` is preserved
+- Other operators (like `krkn-operator`) running in the same namespace are NOT affected
+- Only delete the namespace manually if you want to remove ALL operators

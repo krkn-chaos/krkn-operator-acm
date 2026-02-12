@@ -264,3 +264,36 @@ All core phases (1-7) have been completed:
 - ✅ ConfigMap is now single source of configuration
 - ✅ Added conflict error handling throughout reconcile loop
 - ✅ All resources (KrknTargetRequest, KrknOperatorTargetProvider, Secrets, ConfigMaps) scoped to operator namespace
+
+---
+
+## Phase 18: Namespace Configuration Fix (2026-01-08)
+
+**Issue Found:** Operator was failing to start because ConfigMap lookup was using incorrect namespace `krkn-operator-acm-system` instead of the standard `krkn-operator-system`.
+
+### Changes Made:
+
+- [x] Fixed namespace references in all documentation files:
+  - [x] DEPLOYMENT.md - Updated all namespace references from `krkn-operator-acm-system` to `krkn-operator-system`
+  - [x] MIGRATION.md - Fixed ConfigMap and provider registration examples
+  - [x] TESTING.md - Updated testing commands and kubectl examples
+  - [x] test-multi-operator/README.md - Fixed all test scenarios and cleanup commands
+- [x] Verified default namespace in cmd/main.go:382 is correct (`krkn-operator-system`)
+- [x] Updated sample ConfigMap in config/samples/operator-config.yaml to use correct namespace
+
+### Identified Issue - Namespace Label Conflict:
+
+**Problem:** Both `krkn-operator` and `krkn-operator-acm` operators:
+- Share the same namespace (`krkn-operator-system`)
+- Define the namespace with different labels:
+  - `krkn-operator`: `app.kubernetes.io/name: krkn-operator`
+  - `krkn-operator-acm`: `app.kubernetes.io/name: krkn-operator-acm`
+- When one operator is deployed, it updates the namespace labels
+- This may cause resource cleanup issues if labels are used for selection
+
+**Status:** ⚠️ POTENTIAL ISSUE - Needs investigation
+**Next Steps:**
+- [ ] Test deploying both operators simultaneously
+- [ ] Verify resources don't get deleted when the other operator is deployed
+- [ ] Consider making namespace definition optional or using separate namespaces
+- [ ] Document co-deployment requirements if needed

@@ -24,6 +24,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -31,7 +32,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -47,10 +47,13 @@ import (
 
 	"github.com/krkn-chaos/krkn-operator-acm/internal/controller"
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 	// +kubebuilder:scaffold:imports
 )
 
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviders,verbs=create;get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviders/status,verbs=get;update;patch
 
 var (
 	scheme   = runtime.NewScheme()
@@ -124,21 +127,15 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 	return config, nil
 }
 
-// ConfigAndRegistrationRunnable loads config and registers the operator on startup
-type ConfigAndRegistrationRunnable struct {
+// ConfigLoaderRunnable loads operator configuration on startup
+type ConfigLoaderRunnable struct {
 	Client           client.Client
 	DefaultNamespace string
-	Reconcilers      *Reconcilers
-}
-
-// Reconcilers holds references to controllers that need config updates
-type Reconcilers struct {
-	TargetRequest          *controller.KrknTargetRequestReconciler
-	OperatorTargetProvider *controller.KrknOperatorTargetProviderReconciler
+	Reconciler       *controller.KrknTargetRequestReconciler
 }
 
 // Start implements the Runnable interface
-func (r *ConfigAndRegistrationRunnable) Start(ctx context.Context) error {
+func (r *ConfigLoaderRunnable) Start(ctx context.Context) error {
 	setupLog.Info("Loading operator configuration...")
 
 	// Load configuration from ConfigMap/environment
@@ -148,83 +145,16 @@ func (r *ConfigAndRegistrationRunnable) Start(ctx context.Context) error {
 		return err
 	}
 
-	setupLog.Info("✅ Configuration loaded",
+	setupLog.Info("Configuration loaded",
 		"operator-name", config.OperatorName,
 		"operator-namespace", config.OperatorNamespace)
 
-	// Update reconcilers with loaded config
-	r.Reconcilers.TargetRequest.OperatorName = config.OperatorName
-	r.Reconcilers.TargetRequest.OperatorNamespace = config.OperatorNamespace
-	r.Reconcilers.OperatorTargetProvider.OperatorNamespace = config.OperatorNamespace
-
-	// Register the provider
-	if err := registerOperatorProvider(ctx, r.Client, config.OperatorNamespace, config.OperatorName); err != nil {
-		setupLog.Error(err, "FATAL: Failed to register operator provider - operator cannot function without registration")
-		return err
-	}
-
-	setupLog.Info("✅ Operator successfully registered as provider", "operator-name", config.OperatorName)
+	// Update reconciler with loaded config
+	r.Reconciler.OperatorName = config.OperatorName
+	r.Reconciler.OperatorNamespace = config.OperatorNamespace
 
 	// Keep running to satisfy the Runnable interface
 	<-ctx.Done()
-	return nil
-}
-
-// registerOperatorProvider creates or updates the KrknOperatorTargetProvider CR
-func registerOperatorProvider(ctx context.Context, k8sClient client.Client, namespace, operatorName string) error {
-	setupLog.Info("Registering operator provider", "operator-name", operatorName, "namespace", namespace)
-
-	provider := &krknv1alpha1.KrknOperatorTargetProvider{}
-	providerName := operatorName // Use operator name as the CR name
-
-	err := k8sClient.Get(ctx, types.NamespacedName{
-		Name:      providerName,
-		Namespace: namespace,
-	}, provider)
-
-	now := metav1.Now()
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new provider
-			provider = &krknv1alpha1.KrknOperatorTargetProvider{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      providerName,
-					Namespace: namespace,
-				},
-				Spec: krknv1alpha1.KrknOperatorTargetProviderSpec{
-					OperatorName: operatorName,
-					Active:       true,
-				},
-				Status: krknv1alpha1.KrknOperatorTargetProviderStatus{
-					Timestamp: now,
-				},
-			}
-
-			if err := k8sClient.Create(ctx, provider); err != nil {
-				return err
-			}
-
-			// Update status
-			provider.Status.Timestamp = now
-			if err := k8sClient.Status().Update(ctx, provider); err != nil {
-				setupLog.Error(err, "Failed to update provider status after creation")
-				// Don't fail if status update fails - the CR is created
-			}
-
-			setupLog.Info("Created new operator provider", "name", providerName)
-			return nil
-		}
-		return err
-	}
-
-	// Provider exists, update timestamp
-	provider.Status.Timestamp = now
-	if err := k8sClient.Status().Update(ctx, provider); err != nil {
-		return err
-	}
-
-	setupLog.Info("Updated operator provider timestamp", "name", providerName)
 	return nil
 }
 
@@ -382,44 +312,53 @@ func main() {
 		defaultNamespace = "krkn-operator-system" // Default namespace
 	}
 
-	// Create reconcilers with placeholder values (will be updated by ConfigAndRegistrationRunnable)
+	// Determine operator name from environment (will be loaded from ConfigMap if not set)
+	operatorName := os.Getenv("OPERATOR_NAME")
+	if operatorName == "" {
+		operatorName = "krkn-operator-acm" // Default
+	}
+
+	// Create reconciler with placeholder values (will be updated by ConfigLoaderRunnable)
 	targetRequestReconciler := &controller.KrknTargetRequestReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
-		OperatorName:      "krkn-operator-acm", // Placeholder
-		OperatorNamespace: defaultNamespace,    // Placeholder
-	}
-
-	operatorTargetProviderReconciler := &controller.KrknOperatorTargetProviderReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
+		OperatorName:      operatorName,     // Placeholder
 		OperatorNamespace: defaultNamespace, // Placeholder
 	}
 
-	// Setup controllers
+	// Setup controller
 	if err := targetRequestReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KrknTargetRequest")
 		os.Exit(1)
 	}
-	if err := operatorTargetProviderReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "KrknOperatorTargetProvider")
-		os.Exit(1)
-	}
 	// +kubebuilder:scaffold:builder
 
-	// Add config loader and provider registration runnable
+	// Add config loader runnable
 	// This runs after the manager cache starts and loads config from ConfigMap
-	if err := mgr.Add(&ConfigAndRegistrationRunnable{
+	if err := mgr.Add(&ConfigLoaderRunnable{
 		Client:           mgr.GetClient(),
 		DefaultNamespace: defaultNamespace,
-		Reconcilers: &Reconcilers{
-			TargetRequest:          targetRequestReconciler,
-			OperatorTargetProvider: operatorTargetProviderReconciler,
-		},
+		Reconciler:       targetRequestReconciler,
 	}); err != nil {
-		setupLog.Error(err, "unable to add config and registration runnable")
+		setupLog.Error(err, "unable to add config loader runnable")
 		os.Exit(1)
 	}
+
+	// Add provider registration using the standard krkn-operator package
+	// This handles automatic registration, heartbeat, and deactivation on shutdown
+	providerReg := provider.NewProviderRegistrationWithConfig(
+		mgr.GetClient(),
+		provider.Config{
+			ProviderName:      operatorName,
+			HeartbeatInterval: 30 * time.Second,
+			Namespace:         defaultNamespace,
+		},
+	)
+	if err := mgr.Add(providerReg); err != nil {
+		setupLog.Error(err, "unable to add provider registration")
+		os.Exit(1)
+	}
+	setupLog.Info("Provider registration configured", "operator-name", operatorName, "namespace", defaultNamespace)
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")

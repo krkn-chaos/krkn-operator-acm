@@ -49,16 +49,15 @@ rules:
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
-  - krknoperatortargetproviders/finalizers
-  - krkntargetrequests/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - krkn.krkn-chaos.dev
-  resources:
   - krknoperatortargetproviders/status
   - krkntargetrequests/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - krkn.krkn-chaos.dev
+  resources:
+  - krkntargetrequests/finalizers
+  verbs:
   - update

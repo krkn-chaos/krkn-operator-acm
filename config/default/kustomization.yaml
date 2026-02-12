@@ -17,6 +17,11 @@ namePrefix: krkn-operator-acm-
 resources:
 - ../rbac
 - ../manager
+# [NAMESPACE] The namespace is NOT included in deployment to prevent accidental deletion
+# Create the namespace manually before deployment:
+#   kubectl create namespace krkn-operator-system
+# The 'make deploy' command will verify the namespace exists before proceeding
+#- ../manager/namespace.yaml
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 #- ../webhook
