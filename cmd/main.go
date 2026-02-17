@@ -87,12 +87,12 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 	// Try to read from environment variables first (takes precedence)
 	if envName != "" {
 		config.OperatorName = envName
-		setupLog.Info("Using operator name from environment", "operator-name", envName)
+		setupLog.Info("using operator name from environment", "operator-name", envName)
 	}
 
 	if envNamespace != "" {
 		config.OperatorNamespace = envNamespace
-		setupLog.Info("Using operator namespace from environment", "operator-namespace", envNamespace)
+		setupLog.Info("using operator namespace from environment", "operator-namespace", envNamespace)
 	}
 
 	// Try to read from ConfigMap (if environment variables not set)
@@ -105,7 +105,7 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// ConfigMap not found - use defaults/environment
-			setupLog.Info("ConfigMap not found, using defaults/environment",
+			setupLog.Info("configMap not found, using defaults/environment",
 				"operator-name", config.OperatorName,
 				"operator-namespace", config.OperatorNamespace)
 			return config, nil
@@ -117,14 +117,14 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 	if envName == "" {
 		if operatorName, ok := configMap.Data["operator-name"]; ok && operatorName != "" {
 			config.OperatorName = operatorName
-			setupLog.Info("Loaded operator name from ConfigMap", "operator-name", operatorName)
+			setupLog.Info("loaded operator name from ConfigMap", "operator-name", operatorName)
 		}
 	}
 
 	if envNamespace == "" {
 		if operatorNamespace, ok := configMap.Data["operator-namespace"]; ok && operatorNamespace != "" {
 			config.OperatorNamespace = operatorNamespace
-			setupLog.Info("Loaded operator namespace from ConfigMap", "operator-namespace", operatorNamespace)
+			setupLog.Info("loaded operator namespace from ConfigMap", "operator-namespace", operatorNamespace)
 		}
 	}
 
@@ -141,16 +141,16 @@ type ConfigLoaderRunnable struct {
 
 // Start implements the Runnable interface
 func (r *ConfigLoaderRunnable) Start(ctx context.Context) error {
-	setupLog.Info("Loading operator configuration...")
+	setupLog.Info("loading operator configuration...")
 
 	// Load configuration from ConfigMap/environment
 	config, err := getOperatorConfig(ctx, r.Client, r.DefaultNamespace)
 	if err != nil {
-		setupLog.Error(err, "FATAL: Failed to load operator configuration")
+		setupLog.Error(err, "FATAL: failed to load operator configuration")
 		return err
 	}
 
-	setupLog.Info("Configuration loaded",
+	setupLog.Info("configuration loaded",
 		"operator-name", config.OperatorName,
 		"operator-namespace", config.OperatorNamespace)
 
@@ -225,7 +225,7 @@ func main() {
 	webhookTLSOpts := tlsOpts
 
 	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+		setupLog.Info("initializing webhook certificate watcher using provided certificates",
 			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
 
 		var err error
@@ -234,7 +234,7 @@ func main() {
 			filepath.Join(webhookCertPath, webhookCertKey),
 		)
 		if err != nil {
-			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
+			setupLog.Error(err, "failed to initialize webhook certificate watcher")
 			os.Exit(1)
 		}
 
@@ -274,7 +274,7 @@ func main() {
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
 	if len(metricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
+		setupLog.Info("initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
 
 		var err error
@@ -318,7 +318,7 @@ func main() {
 
 	// Initialize configstore singleton
 	_ = kvstore.Get()
-	setupLog.Info("Configstore singleton initialized")
+	setupLog.Info("configstore singleton initialized")
 
 	// Determine default namespace from environment
 	defaultNamespace := os.Getenv("POD_NAMESPACE")
@@ -373,7 +373,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
 		os.Exit(1)
 	}
-	setupLog.Info("ConfigMap controller configured",
+	setupLog.Info("configMap controller configured",
 		"configmap-name", controller.DefaultConfigMapName,
 		"namespace", defaultNamespace)
 	// +kubebuilder:scaffold:builder
@@ -404,10 +404,10 @@ func main() {
 		setupLog.Error(err, "unable to add provider registration")
 		os.Exit(1)
 	}
-	setupLog.Info("Provider registration configured", "operator-name", operatorName, "namespace", defaultNamespace)
+	setupLog.Info("provider registration configured", "operator-name", operatorName, "namespace", defaultNamespace)
 
 	if metricsCertWatcher != nil {
-		setupLog.Info("Adding metrics certificate watcher to manager")
+		setupLog.Info("adding metrics certificate watcher to manager")
 		if err := mgr.Add(metricsCertWatcher); err != nil {
 			setupLog.Error(err, "unable to add metrics certificate watcher to manager")
 			os.Exit(1)
@@ -415,7 +415,7 @@ func main() {
 	}
 
 	if webhookCertWatcher != nil {
-		setupLog.Info("Adding webhook certificate watcher to manager")
+		setupLog.Info("adding webhook certificate watcher to manager")
 		if err := mgr.Add(webhookCertWatcher); err != nil {
 			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
 			os.Exit(1)

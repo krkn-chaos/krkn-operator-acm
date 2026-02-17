@@ -55,16 +55,16 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err := r.Get(ctx, req.NamespacedName, configMap)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("ConfigMap not found, keeping existing configstore values",
+			logger.Info("configMap not found, keeping existing configstore values",
 				"name", req.Name,
 				"namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get ConfigMap")
+		logger.Error(err, "failed to get ConfigMap")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Syncing ConfigMap to configstore",
+	logger.Info("syncing ConfigMap to configstore",
 		"name", configMap.Name,
 		"namespace", configMap.Namespace,
 		"keys-count", len(configMap.Data))
@@ -74,7 +74,7 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		oldValue, exists := store.GetValue(key)
 		if !exists || oldValue != value {
 			store.SetValue(key, value)
-			logger.Info("Updated config value",
+			logger.Info("updated config value",
 				"key", key,
 				"old", oldValue,
 				"new", value,

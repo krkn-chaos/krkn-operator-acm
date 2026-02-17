@@ -99,16 +99,16 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	err := r.Get(ctx, req.NamespacedName, krknRequest)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("KrknTargetRequest resource not found. Ignoring since object must be deleted")
+			logger.Info("krknTargetRequest resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get KrknTargetRequest")
+		logger.Error(err, "failed to get KrknTargetRequest")
 		return ctrl.Result{}, err
 	}
 
 	// Initialize status to "pending" if it's empty (new resource)
 	if krknRequest.Status.Status == "" {
-		logger.Info("Initializing status to pending", "UUID", krknRequest.Spec.UUID)
+		logger.Info("initializing status to pending", "UUID", krknRequest.Spec.UUID)
 
 		// Add UUID label if not present
 		if krknRequest.Labels == nil {
@@ -126,10 +126,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			err = r.Update(ctx, krknRequest)
 			if err != nil {
 				if errors.IsConflict(err) {
-					logger.Info("Conflict updating labels, will retry")
+					logger.Info("conflict updating labels, will retry")
 					return ctrl.Result{Requeue: true}, nil
 				}
-				logger.Error(err, "Failed to add UUID label")
+				logger.Error(err, "failed to add UUID label")
 				return ctrl.Result{}, err
 			}
 		}
@@ -141,10 +141,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		err = r.Status().Update(ctx, krknRequest)
 		if err != nil {
 			if errors.IsConflict(err) {
-				logger.Info("Conflict initializing status, will retry")
+				logger.Info("conflict initializing status, will retry")
 				return ctrl.Result{Requeue: true}, nil
 			}
-			logger.Error(err, "Failed to initialize status")
+			logger.Error(err, "failed to initialize status")
 			return ctrl.Result{}, err
 		}
 		// Return empty result to allow natural reconciliation
@@ -153,26 +153,26 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Check if the request is already completed
 	if krknRequest.Status.Status == StatusCompleted {
-		logger.Info("KrknTargetRequest already completed", "UUID", krknRequest.Spec.UUID)
+		logger.Info("krknTargetRequest already completed", "UUID", krknRequest.Spec.UUID)
 		return ctrl.Result{}, nil
 	}
 
 	// Check if status is pending
 	if krknRequest.Status.Status != "pending" {
-		logger.Info("KrknTargetRequest status is not pending, skipping", "status", krknRequest.Status.Status)
+		logger.Info("krknTargetRequest status is not pending, skipping", "status", krknRequest.Status.Status)
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("Processing KrknTargetRequest", "UUID", krknRequest.Spec.UUID)
+	logger.Info("processing krknTargetRequest", "UUID", krknRequest.Spec.UUID)
 
 	// Get managed clusters
 	managedClusters, err := r.getManagedClusters(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to get managed clusters")
+		logger.Error(err, "failed to get managed clusters")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Found managed clusters", "count", len(managedClusters.Items))
+	logger.Info("found managed clusters", "count", len(managedClusters.Items))
 
 	// Collect cluster data
 	clustersData := make(map[string]ClusterData)
@@ -180,10 +180,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
-		logger.Info("Processing cluster", "name", clusterName)
+		logger.Info("processing cluster", "name", clusterName)
 
 		if len(cluster.Spec.ManagedClusterClientConfigs) == 0 {
-			logger.Info("Cluster has no client configs, skipping", "name", clusterName)
+			logger.Info("cluster has no client configs, skipping", "name", clusterName)
 			continue
 		}
 
@@ -194,21 +194,21 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		secretName := r.getConfiguredSecretName(clusterName)
 		secret, err := r.getClusterSecret(ctx, clusterName, secretName)
 		if err != nil {
-			logger.Error(err, "Failed to get cluster secret", "cluster", clusterName, "secret", secretName)
+			logger.Error(err, "failed to get cluster secret", "cluster", clusterName, "secret", secretName)
 			continue
 		}
 
 		// Extract token from secret
 		token, ok := secret.Data["token"]
 		if !ok {
-			logger.Error(fmt.Errorf("token not found in secret"), "Missing token", "cluster", clusterName)
+			logger.Error(fmt.Errorf("token not found in secret"), "missing token", "cluster", clusterName)
 			continue
 		}
 
 		// Generate kubeconfig
 		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, string(token))
 		if err != nil {
-			logger.Error(err, "Failed to generate kubeconfig", "cluster", clusterName)
+			logger.Error(err, "failed to generate kubeconfig", "cluster", clusterName)
 			continue
 		}
 
@@ -230,11 +230,11 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Create secret with managed clusters data
 	err = r.createManagedClustersSecret(ctx, krknRequest.Spec.UUID, clustersData)
 	if err != nil {
-		logger.Error(err, "Failed to create managed clusters secret")
+		logger.Error(err, "failed to create managed clusters secret")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Created secret with managed clusters data", "secretName", krknRequest.Spec.UUID)
+	logger.Info("created secret with managed clusters data", "secretName", krknRequest.Spec.UUID)
 
 	// Initialize TargetData map if nil
 	if krknRequest.Status.TargetData == nil {
@@ -244,13 +244,13 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Set target data for this operator
 	krknRequest.Status.TargetData[r.OperatorName] = targetData
 
-	logger.Info("Set target data for operator", "operator-name", r.OperatorName, "target-count", len(targetData))
+	logger.Info("set target data for operator", "operator-name", r.OperatorName, "target-count", len(targetData))
 
 	// Count the number of active KrknOperatorTargetProviders in the operator's namespace
 	providerList := &krknv1alpha1.KrknOperatorTargetProviderList{}
 	err = r.List(ctx, providerList, client.InNamespace(r.OperatorNamespace))
 	if err != nil {
-		logger.Error(err, "Failed to list KrknOperatorTargetProviders", "namespace", r.OperatorNamespace)
+		logger.Error(err, "failed to list KrknOperatorTargetProviders", "namespace", r.OperatorNamespace)
 		return ctrl.Result{}, err
 	}
 
@@ -264,7 +264,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	contributorCount := len(krknRequest.Status.TargetData)
 
-	logger.Info("Provider status",
+	logger.Info("provider status",
 		"total-providers", len(providerList.Items),
 		"active-providers", activeProviderCount,
 		"contributors", contributorCount,
@@ -276,9 +276,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		completedTime := metav1.Now()
 		krknRequest.Status.Status = StatusCompleted
 		krknRequest.Status.Completed = &completedTime
-		logger.Info("All active providers have contributed, marking as Completed", "UUID", krknRequest.Spec.UUID)
+		logger.Info("all active providers have contributed, marking as completed", "UUID", krknRequest.Spec.UUID)
 	} else {
-		logger.Info("Waiting for more providers to contribute",
+		logger.Info("waiting for more providers to contribute",
 			"needed", activeProviderCount,
 			"current", contributorCount)
 	}
@@ -286,14 +286,14 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	err = r.Status().Update(ctx, krknRequest)
 	if err != nil {
 		if errors.IsConflict(err) {
-			logger.Info("Conflict updating status, will retry", "UUID", krknRequest.Spec.UUID)
+			logger.Info("conflict updating status, will retry", "UUID", krknRequest.Spec.UUID)
 			return ctrl.Result{Requeue: true}, nil
 		}
-		logger.Error(err, "Failed to update KrknTargetRequest status")
+		logger.Error(err, "failed to update KrknTargetRequest status")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully updated KrknTargetRequest", "UUID", krknRequest.Spec.UUID, "status", krknRequest.Status.Status)
+	logger.Info("successfully updated krknTargetRequest", "UUID", krknRequest.Spec.UUID, "status", krknRequest.Status.Status)
 	return ctrl.Result{}, nil
 }
 

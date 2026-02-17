@@ -63,30 +63,30 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 	err := r.Get(ctx, req.NamespacedName, config)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("KrknOperatorTargetProviderConfig resource not found. Ignoring since object must be deleted")
+			logger.Info("krknOperatorTargetProviderConfig resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get KrknOperatorTargetProviderConfig")
+		logger.Error(err, "failed to get KrknOperatorTargetProviderConfig")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Processing KrknOperatorTargetProviderConfig", "UUID", config.Spec.UUID)
+	logger.Info("processing KrknOperatorTargetProviderConfig", "UUID", config.Spec.UUID)
 
 	// Build the configuration schema based on ACM managed clusters and their secrets
 	jsonSchema, err := r.buildConfigSchema(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to build configuration schema")
+		logger.Error(err, "failed to build configuration schema")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Built configuration schema", "schema-length", len(jsonSchema))
+	logger.Info("built configuration schema", "schema-length", len(jsonSchema))
 
 	// Re-fetch the config to get the latest version before updating
 	// This helps avoid conflicts if the resource was modified by webhooks or other controllers
 	freshConfig := &krknv1alpha1.KrknOperatorTargetProviderConfig{}
 	err = r.Get(ctx, req.NamespacedName, freshConfig)
 	if err != nil {
-		logger.Error(err, "Failed to re-fetch KrknOperatorTargetProviderConfig")
+		logger.Error(err, "failed to re-fetch KrknOperatorTargetProviderConfig")
 		return ctrl.Result{}, err
 	}
 
@@ -102,14 +102,14 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 	if err != nil {
 		// If there's a conflict, requeue to retry with the latest version
 		if errors.IsConflict(err) {
-			logger.Info("Conflict updating provider config, will retry", "UUID", freshConfig.Spec.UUID)
+			logger.Info("conflict updating provider config, will retry", "UUID", freshConfig.Spec.UUID)
 			return ctrl.Result{Requeue: true}, nil
 		}
-		logger.Error(err, "Failed to update provider config")
+		logger.Error(err, "failed to update provider config")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully updated provider config", "UUID", freshConfig.Spec.UUID, "operator-name", r.OperatorName)
+	logger.Info("successfully updated provider config", "UUID", freshConfig.Spec.UUID, "operator-name", r.OperatorName)
 	return ctrl.Result{}, nil
 }
 
@@ -124,7 +124,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		return "", fmt.Errorf("failed to get managed clusters: %w", err)
 	}
 
-	logger.Info("Found managed clusters for config schema", "count", len(managedClusters.Items))
+	logger.Info("found managed clusters for config schema", "count", len(managedClusters.Items))
 
 	// Build input fields for each cluster
 	var fields []typing.InputField
@@ -135,12 +135,12 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		// List secrets in the cluster namespace
 		secrets, err := r.listSecretsInNamespace(ctx, clusterName)
 		if err != nil {
-			logger.Error(err, "Failed to list secrets in namespace, skipping cluster", "cluster", clusterName)
+			logger.Error(err, "failed to list secrets in namespace, skipping cluster", "cluster", clusterName)
 			continue
 		}
 
 		if len(secrets) == 0 {
-			logger.Info("No secrets found in cluster namespace, skipping", "cluster", clusterName)
+			logger.Info("no secrets found in cluster namespace, skipping", "cluster", clusterName)
 			continue
 		}
 
@@ -171,7 +171,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		}
 
 		fields = append(fields, field)
-		logger.Info("Added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
+		logger.Info("added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
 	}
 
 	// Serialize fields to JSON
