@@ -55,6 +55,32 @@ once the operator receives the `KrknTargetRequest` the operator must:
   that method, and I want to remove the single property collection methods like `getOperatorName`
 - check  the krkntargetrequest_controller.go line 133 `Requeue` is deprecated, find a solution.
 
+# KrknOperatorTargetProviderConfig reconciliation and ConfigMap setting
+
+I want to have a controller for KrknOperatorTargetProviderConfig CRD from https://github.com/krkn-chaos/krkn-operator/api/v1alpha1.
+In the reconcile loop the CR must be updated using the https://github.com/krkn-chaos/krkn-operator/pkg/provider/config.go methods.
+
+## config schema 
+
+the config schema must be built on top of krknctl typing system exposed by https://github.com/krkn-chaos/krknctl/pkg/typing.
+The first target is to build a list of the available secret for each cluster namespace:
+- list the managedcluster CRs
+- for each cluster in the list a namespace is available
+- for each cluster a field must be created:
+- - the field must be of type enum
+- - the separator must be a ","
+- - the comma separated values are the secrets available in the namespace sorted
+- - the default value is "application-manager" secret if present in the list otherwise the first available
+- - the variable must be ACM_SECRET_<NAMESPACE>
+- - - namespace must be capitalized an - replaced by _
+- - - there must be a method to format the namespace
+-  the field list must be serialized to json and passed to the UpdateProviderConfig as jsonSchema parameter
+- operatorName will come from the same const used to register the KrknOperatorTargetProvider 
+
+
+
+
+
 
  
 

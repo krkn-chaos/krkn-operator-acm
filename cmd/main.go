@@ -129,9 +129,10 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 
 // ConfigLoaderRunnable loads operator configuration on startup
 type ConfigLoaderRunnable struct {
-	Client           client.Client
-	DefaultNamespace string
-	Reconciler       *controller.KrknTargetRequestReconciler
+	Client                      client.Client
+	DefaultNamespace            string
+	TargetRequestReconciler     *controller.KrknTargetRequestReconciler
+	ProviderConfigReconciler    *controller.KrknOperatorTargetProviderConfigReconciler
 }
 
 // Start implements the Runnable interface
@@ -149,9 +150,14 @@ func (r *ConfigLoaderRunnable) Start(ctx context.Context) error {
 		"operator-name", config.OperatorName,
 		"operator-namespace", config.OperatorNamespace)
 
-	// Update reconciler with loaded config
-	r.Reconciler.OperatorName = config.OperatorName
-	r.Reconciler.OperatorNamespace = config.OperatorNamespace
+	// Update reconcilers with loaded config
+	r.TargetRequestReconciler.OperatorName = config.OperatorName
+	r.TargetRequestReconciler.OperatorNamespace = config.OperatorNamespace
+
+	if r.ProviderConfigReconciler != nil {
+		r.ProviderConfigReconciler.OperatorName = config.OperatorName
+		r.ProviderConfigReconciler.OperatorNamespace = config.OperatorNamespace
+	}
 
 	// Keep running to satisfy the Runnable interface
 	<-ctx.Done()
@@ -331,14 +337,29 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "KrknTargetRequest")
 		os.Exit(1)
 	}
+
+	// Create KrknOperatorTargetProviderConfig reconciler
+	providerConfigReconciler := &controller.KrknOperatorTargetProviderConfigReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		OperatorName:      operatorName,     // Placeholder
+		OperatorNamespace: defaultNamespace, // Placeholder
+	}
+
+	// Setup controller
+	if err := providerConfigReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "KrknOperatorTargetProviderConfig")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	// Add config loader runnable
 	// This runs after the manager cache starts and loads config from ConfigMap
 	if err := mgr.Add(&ConfigLoaderRunnable{
-		Client:           mgr.GetClient(),
-		DefaultNamespace: defaultNamespace,
-		Reconciler:       targetRequestReconciler,
+		Client:                   mgr.GetClient(),
+		DefaultNamespace:         defaultNamespace,
+		TargetRequestReconciler:  targetRequestReconciler,
+		ProviderConfigReconciler: providerConfigReconciler,
 	}); err != nil {
 		setupLog.Error(err, "unable to add config loader runnable")
 		os.Exit(1)

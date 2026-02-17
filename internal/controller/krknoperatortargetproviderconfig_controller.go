@@ -1,0 +1,260 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
+*/
+
+package controller
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	"github.com/krkn-chaos/krkn-operator/pkg/provider"
+	"github.com/krkn-chaos/krknctl/pkg/typing"
+)
+
+// KrknOperatorTargetProviderConfigReconciler reconciles a KrknOperatorTargetProviderConfig object
+type KrknOperatorTargetProviderConfigReconciler struct {
+	client.Client
+	Scheme            *runtime.Scheme
+	OperatorName      string
+	OperatorNamespace string
+}
+
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviderconfigs,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviderconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=list
+// +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Fetch the KrknOperatorTargetProviderConfig instance
+	config := &krknv1alpha1.KrknOperatorTargetProviderConfig{}
+	err := r.Get(ctx, req.NamespacedName, config)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("KrknOperatorTargetProviderConfig resource not found. Ignoring since object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to get KrknOperatorTargetProviderConfig")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Processing KrknOperatorTargetProviderConfig", "UUID", config.Spec.UUID)
+
+	// Build the configuration schema based on ACM managed clusters and their secrets
+	jsonSchema, err := r.buildConfigSchema(ctx)
+	if err != nil {
+		logger.Error(err, "Failed to build configuration schema")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Built configuration schema", "schema-length", len(jsonSchema))
+
+	// Update the provider config using the krkn-operator package
+	err = provider.UpdateProviderConfig(
+		ctx,
+		r.Client,
+		config,
+		r.OperatorName,
+		DefaultConfigMapName,
+		jsonSchema,
+	)
+	if err != nil {
+		logger.Error(err, "Failed to update provider config")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Successfully updated provider config", "UUID", config.Spec.UUID, "operator-name", r.OperatorName)
+	return ctrl.Result{}, nil
+}
+
+// buildConfigSchema constructs the JSON schema for the provider configuration
+// based on available ACM managed clusters and their secrets
+func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx context.Context) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// Get all managed clusters
+	managedClusters, err := r.getManagedClusters(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get managed clusters: %w", err)
+	}
+
+	logger.Info("Found managed clusters for config schema", "count", len(managedClusters.Items))
+
+	// Build input fields for each cluster
+	var fields []typing.InputField
+
+	for _, cluster := range managedClusters.Items {
+		clusterName := cluster.Metadata.Name
+
+		// List secrets in the cluster namespace
+		secrets, err := r.listSecretsInNamespace(ctx, clusterName)
+		if err != nil {
+			logger.Error(err, "Failed to list secrets in namespace, skipping cluster", "cluster", clusterName)
+			continue
+		}
+
+		if len(secrets) == 0 {
+			logger.Info("No secrets found in cluster namespace, skipping", "cluster", clusterName)
+			continue
+		}
+
+		// Sort secrets alphabetically
+		sort.Strings(secrets)
+
+		// Determine default secret (application-manager if present, otherwise first)
+		defaultSecret := getDefaultSecret(secrets)
+
+		// Create variable name from namespace
+		varName := formatNamespaceToVarName(clusterName)
+
+		// Create the field description
+		name := varName
+		shortDesc := fmt.Sprintf("Secret for %s", clusterName)
+		description := fmt.Sprintf("Select the secret to use for cluster %s authentication. Available secrets: %s",
+			clusterName, strings.Join(secrets, ", "))
+		variable := varName
+		separator := ","
+		allowedValues := strings.Join(secrets, ",")
+
+		// Build the InputField
+		field := typing.InputField{
+			Name:              &name,
+			ShortDescription:  &shortDesc,
+			Description:       &description,
+			Variable:          &variable,
+			Type:              typing.Enum,
+			Default:           &defaultSecret,
+			Separator:         &separator,
+			AllowedValues:     &allowedValues,
+			Required:          true,
+			Secret:            false,
+		}
+
+		fields = append(fields, field)
+		logger.Info("Added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
+	}
+
+	// Serialize fields to JSON
+	jsonData, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal config schema: %w", err)
+	}
+
+	return string(jsonData), nil
+}
+
+// formatNamespaceToVarName formats a namespace name to a valid environment variable name
+// Converts to uppercase and replaces hyphens with underscores
+// Prefixes with ACM_SECRET_
+func formatNamespaceToVarName(namespace string) string {
+	// Replace hyphens with underscores
+	formatted := strings.ReplaceAll(namespace, "-", "_")
+	// Convert to uppercase
+	formatted = strings.ToUpper(formatted)
+	// Add prefix
+	return "ACM_SECRET_" + formatted
+}
+
+// listSecretsInNamespace returns a list of secret names in the given namespace
+func (r *KrknOperatorTargetProviderConfigReconciler) listSecretsInNamespace(ctx context.Context, namespace string) ([]string, error) {
+	secretList := &corev1.SecretList{}
+	err := r.List(ctx, secretList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list secrets in namespace %s: %w", namespace, err)
+	}
+
+	secretNames := make([]string, 0, len(secretList.Items))
+	for _, secret := range secretList.Items {
+		secretNames = append(secretNames, secret.Name)
+	}
+
+	return secretNames, nil
+}
+
+// getDefaultSecret determines the default secret from a list
+// Prefers "application-manager" if present, otherwise returns the first secret
+func getDefaultSecret(secrets []string) string {
+	if len(secrets) == 0 {
+		return ""
+	}
+
+	// Check if application-manager is in the list
+	for _, secret := range secrets {
+		if secret == "application-manager" {
+			return "application-manager"
+		}
+	}
+
+	// Return the first secret if application-manager not found
+	return secrets[0]
+}
+
+// getManagedClusters retrieves all managed clusters from ACM
+func (r *KrknOperatorTargetProviderConfigReconciler) getManagedClusters(ctx context.Context) (*ManagedClusterList, error) {
+	// Create an unstructured list to fetch managed clusters
+	clusterList := &unstructured.UnstructuredList{}
+	clusterList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "cluster.open-cluster-management.io",
+		Version: "v1",
+		Kind:    "ManagedClusterList",
+	})
+
+	// List all managed clusters using the generic client
+	err := r.List(ctx, clusterList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list managed clusters: %w", err)
+	}
+
+	// Convert the unstructured result to our struct
+	managedClusterList := &ManagedClusterList{}
+	data, err := json.Marshal(clusterList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal managed clusters: %w", err)
+	}
+
+	err = json.Unmarshal(data, managedClusterList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal managed clusters: %w", err)
+	}
+
+	return managedClusterList, nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *KrknOperatorTargetProviderConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&krknv1alpha1.KrknOperatorTargetProviderConfig{}).
+		Named("krknoperatortargetproviderconfig").
+		Complete(r)
+}
