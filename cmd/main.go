@@ -47,6 +47,7 @@ import (
 
 	"github.com/krkn-chaos/krkn-operator-acm/internal/controller"
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 	// +kubebuilder:scaffold:imports
 )
@@ -80,13 +81,16 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 		OperatorNamespace: defaultNamespace,    // From environment or default
 	}
 
+	envName := os.Getenv("OPERATOR_NAME")
+	envNamespace := os.Getenv("POD_NAMESPACE")
+
 	// Try to read from environment variables first (takes precedence)
-	if envName := os.Getenv("OPERATOR_NAME"); envName != "" {
+	if envName != "" {
 		config.OperatorName = envName
 		setupLog.Info("Using operator name from environment", "operator-name", envName)
 	}
 
-	if envNamespace := os.Getenv("POD_NAMESPACE"); envNamespace != "" {
+	if envNamespace != "" {
 		config.OperatorNamespace = envNamespace
 		setupLog.Info("Using operator namespace from environment", "operator-namespace", envNamespace)
 	}
@@ -110,14 +114,14 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 	}
 
 	// Override with ConfigMap values if not set by environment
-	if os.Getenv("OPERATOR_NAME") == "" {
+	if envName == "" {
 		if operatorName, ok := configMap.Data["operator-name"]; ok && operatorName != "" {
 			config.OperatorName = operatorName
 			setupLog.Info("Loaded operator name from ConfigMap", "operator-name", operatorName)
 		}
 	}
 
-	if os.Getenv("POD_NAMESPACE") == "" {
+	if envNamespace == "" {
 		if operatorNamespace, ok := configMap.Data["operator-namespace"]; ok && operatorNamespace != "" {
 			config.OperatorNamespace = operatorNamespace
 			setupLog.Info("Loaded operator namespace from ConfigMap", "operator-namespace", operatorNamespace)
@@ -129,10 +133,10 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 
 // ConfigLoaderRunnable loads operator configuration on startup
 type ConfigLoaderRunnable struct {
-	Client                      client.Client
-	DefaultNamespace            string
-	TargetRequestReconciler     *controller.KrknTargetRequestReconciler
-	ProviderConfigReconciler    *controller.KrknOperatorTargetProviderConfigReconciler
+	Client                   client.Client
+	DefaultNamespace         string
+	TargetRequestReconciler  *controller.KrknTargetRequestReconciler
+	ProviderConfigReconciler *controller.KrknOperatorTargetProviderConfigReconciler
 }
 
 // Start implements the Runnable interface
@@ -312,6 +316,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize configstore singleton
+	_ = kvstore.Get()
+	setupLog.Info("Configstore singleton initialized")
+
 	// Determine default namespace from environment
 	defaultNamespace := os.Getenv("POD_NAMESPACE")
 	if defaultNamespace == "" {
@@ -351,6 +359,23 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "KrknOperatorTargetProviderConfig")
 		os.Exit(1)
 	}
+
+	// Create ConfigMap reconciler to sync configuration to configstore
+	configMapReconciler := &controller.ConfigMapReconciler{
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		ConfigMapName:      controller.DefaultConfigMapName,
+		ConfigMapNamespace: defaultNamespace,
+	}
+
+	// Setup controller
+	if err := configMapReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
+		os.Exit(1)
+	}
+	setupLog.Info("ConfigMap controller configured",
+		"configmap-name", controller.DefaultConfigMapName,
+		"namespace", defaultNamespace)
 	// +kubebuilder:scaffold:builder
 
 	// Add config loader runnable

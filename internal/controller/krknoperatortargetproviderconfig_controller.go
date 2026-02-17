@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 	"github.com/krkn-chaos/krknctl/pkg/typing"
 )
@@ -80,21 +81,35 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 
 	logger.Info("Built configuration schema", "schema-length", len(jsonSchema))
 
+	// Re-fetch the config to get the latest version before updating
+	// This helps avoid conflicts if the resource was modified by webhooks or other controllers
+	freshConfig := &krknv1alpha1.KrknOperatorTargetProviderConfig{}
+	err = r.Get(ctx, req.NamespacedName, freshConfig)
+	if err != nil {
+		logger.Error(err, "Failed to re-fetch KrknOperatorTargetProviderConfig")
+		return ctrl.Result{}, err
+	}
+
 	// Update the provider config using the krkn-operator package
 	err = provider.UpdateProviderConfig(
 		ctx,
 		r.Client,
-		config,
+		freshConfig,
 		r.OperatorName,
 		DefaultConfigMapName,
 		jsonSchema,
 	)
 	if err != nil {
+		// If there's a conflict, requeue to retry with the latest version
+		if errors.IsConflict(err) {
+			logger.Info("Conflict updating provider config, will retry", "UUID", freshConfig.Spec.UUID)
+			return ctrl.Result{Requeue: true}, nil
+		}
 		logger.Error(err, "Failed to update provider config")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully updated provider config", "UUID", config.Spec.UUID, "operator-name", r.OperatorName)
+	logger.Info("Successfully updated provider config", "UUID", freshConfig.Spec.UUID, "operator-name", r.OperatorName)
 	return ctrl.Result{}, nil
 }
 
@@ -132,33 +147,27 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		// Sort secrets alphabetically
 		sort.Strings(secrets)
 
-		// Determine default secret (application-manager if present, otherwise first)
-		defaultSecret := getDefaultSecret(secrets)
-
 		// Create variable name from namespace
 		varName := formatNamespaceToVarName(clusterName)
-
-		// Create the field description
-		name := varName
+		defaultSecret := getDefaultSecret(clusterName, secrets)
 		shortDesc := fmt.Sprintf("Secret for %s", clusterName)
 		description := fmt.Sprintf("Select the secret to use for cluster %s authentication. Available secrets: %s",
 			clusterName, strings.Join(secrets, ", "))
-		variable := varName
 		separator := ","
 		allowedValues := strings.Join(secrets, ",")
 
 		// Build the InputField
 		field := typing.InputField{
-			Name:              &name,
-			ShortDescription:  &shortDesc,
-			Description:       &description,
-			Variable:          &variable,
-			Type:              typing.Enum,
-			Default:           &defaultSecret,
-			Separator:         &separator,
-			AllowedValues:     &allowedValues,
-			Required:          true,
-			Secret:            false,
+			Name:             &varName,
+			ShortDescription: &shortDesc,
+			Description:      &description,
+			Variable:         &varName,
+			Type:             typing.Enum,
+			Default:          &defaultSecret,
+			Separator:        &separator,
+			AllowedValues:    &allowedValues,
+			Required:         true,
+			Secret:           false,
 		}
 
 		fields = append(fields, field)
@@ -187,6 +196,7 @@ func formatNamespaceToVarName(namespace string) string {
 }
 
 // listSecretsInNamespace returns a list of secret names in the given namespace
+// that contain both "ca.crt" and "token" keys in their Data field
 func (r *KrknOperatorTargetProviderConfigReconciler) listSecretsInNamespace(ctx context.Context, namespace string) ([]string, error) {
 	secretList := &corev1.SecretList{}
 	err := r.List(ctx, secretList, client.InNamespace(namespace))
@@ -196,23 +206,51 @@ func (r *KrknOperatorTargetProviderConfigReconciler) listSecretsInNamespace(ctx 
 
 	secretNames := make([]string, 0, len(secretList.Items))
 	for _, secret := range secretList.Items {
-		secretNames = append(secretNames, secret.Name)
+		// Only include secrets that have both ca.crt and token keys
+		if hasRequiredKeys(secret.Data) {
+			secretNames = append(secretNames, secret.Name)
+		}
 	}
 
 	return secretNames, nil
 }
 
+// hasRequiredKeys checks if a secret contains both "ca.crt" and "token" keys
+func hasRequiredKeys(data map[string][]byte) bool {
+	_, hasCert := data["ca.crt"]
+	_, hasToken := data["token"]
+	return hasCert && hasToken
+}
+
 // getDefaultSecret determines the default secret from a list
-// Prefers "application-manager" if present, otherwise returns the first secret
-func getDefaultSecret(secrets []string) string {
+// Priority order:
+// 1. Value from configstore for ACM_SECRET_<NAMESPACE> (if exists and valid)
+// 2. "application-manager" (if present in the list)
+// 3. First secret in the list
+func getDefaultSecret(namespace string, secrets []string) string {
 	if len(secrets) == 0 {
 		return ""
 	}
 
-	// Check if application-manager is in the list
+	// Get the configstore singleton
+	store := kvstore.Get()
+
+	// Check if there's a configured value in configstore
+	varName := formatNamespaceToVarName(namespace)
+	if configuredValue, ok := store.GetValue(varName); ok && configuredValue != "" {
+		// Verify the configured value is in the available secrets list
+		for _, secret := range secrets {
+			if secret == configuredValue {
+				return configuredValue
+			}
+		}
+		// If configured value is not in the list, fall through to next priority
+	}
+
+	// Check if ACMDefaultSecret is in the list
 	for _, secret := range secrets {
-		if secret == "application-manager" {
-			return "application-manager"
+		if secret == ACMDefaultSecret {
+			return ACMDefaultSecret
 		}
 	}
 

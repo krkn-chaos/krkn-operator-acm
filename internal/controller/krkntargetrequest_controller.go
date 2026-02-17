@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
 
 const (
@@ -110,11 +111,11 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		logger.Info("Initializing status to pending", "UUID", krknRequest.Spec.UUID)
 
 		// Add UUID label if not present
-		needsLabelUpdate := false
 		if krknRequest.Labels == nil {
 			krknRequest.Labels = make(map[string]string)
-			needsLabelUpdate = true
 		}
+
+		needsLabelUpdate := false
 		if _, exists := krknRequest.Labels["krkn.krkn-chaos.dev/uuid"]; !exists {
 			krknRequest.Labels["krkn.krkn-chaos.dev/uuid"] = krknRequest.Spec.UUID
 			needsLabelUpdate = true
@@ -189,10 +190,11 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		clusterURL := cluster.Spec.ManagedClusterClientConfigs[0].URL
 		clusterCABundle := cluster.Spec.ManagedClusterClientConfigs[0].CABundle
 
-		// Get the application-manager secret from the cluster namespace
-		secret, err := r.getApplicationManagerSecret(ctx, clusterName)
+		// Get the configured secret from configstore, or use default
+		secretName := r.getConfiguredSecretName(clusterName)
+		secret, err := r.getClusterSecret(ctx, clusterName, secretName)
 		if err != nil {
-			logger.Error(err, "Failed to get application-manager secret", "cluster", clusterName)
+			logger.Error(err, "Failed to get cluster secret", "cluster", clusterName, "secret", secretName)
 			continue
 		}
 
@@ -270,7 +272,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		"provider-namespaces", getProviderNamespaces(providerList.Items))
 
 	// Check if all active providers have contributed
-	if contributorCount >= activeProviderCount && activeProviderCount > 0 {
+	if activeProviderCount > 0 && contributorCount >= activeProviderCount {
 		completedTime := metav1.Now()
 		krknRequest.Status.Status = StatusCompleted
 		krknRequest.Status.Completed = &completedTime
@@ -326,16 +328,34 @@ func (r *KrknTargetRequestReconciler) getManagedClusters(ctx context.Context) (*
 	return managedClusterList, nil
 }
 
-// getApplicationManagerSecret retrieves the application-manager secret from a cluster namespace
-func (r *KrknTargetRequestReconciler) getApplicationManagerSecret(ctx context.Context, clusterName string) (*corev1.Secret, error) {
+// getConfiguredSecretName determines which secret to use for a cluster
+// by querying the configstore for ACM_SECRET_<CLUSTER_NAME>
+// Falls back to ACMDefaultSecret if not configured
+func (r *KrknTargetRequestReconciler) getConfiguredSecretName(clusterName string) string {
+	store := kvstore.Get()
+
+	// Normalize cluster name to variable format
+	varName := formatNamespaceToVarName(clusterName)
+
+	// Query configstore
+	if secretName, ok := store.GetValue(varName); ok && secretName != "" {
+		return secretName
+	}
+
+	// Fallback to default
+	return ACMDefaultSecret
+}
+
+// getClusterSecret retrieves a secret from a cluster namespace
+func (r *KrknTargetRequestReconciler) getClusterSecret(ctx context.Context, clusterName, secretName string) (*corev1.Secret, error) {
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      "application-manager",
+		Name:      secretName,
 		Namespace: clusterName,
 	}, secret)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get application-manager secret in namespace %s: %w", clusterName, err)
+		return nil, fmt.Errorf("failed to get secret %s in namespace %s: %w", secretName, clusterName, err)
 	}
 
 	return secret, nil
@@ -378,19 +398,14 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 	getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNamespace}, existingSecret)
 
 	var allOperatorData map[string]map[string]ClusterData
-	secretExists := false
+	secretExists := getErr == nil
 
-	if getErr != nil {
-		if errors.IsNotFound(getErr) {
-			// Secret doesn't exist, create new structure
-			allOperatorData = make(map[string]map[string]ClusterData)
-			secretExists = false
-		} else {
-			return fmt.Errorf("failed to check if secret exists: %w", getErr)
-		}
-	} else {
+	if getErr != nil && !errors.IsNotFound(getErr) {
+		return fmt.Errorf("failed to check if secret exists: %w", getErr)
+	}
+
+	if secretExists {
 		// Secret exists, parse existing data
-		secretExists = true
 		existingData, ok := existingSecret.Data["managed-clusters"]
 		if ok && len(existingData) > 0 {
 			// Try to unmarshal as multi-operator format first
@@ -410,6 +425,9 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		} else {
 			allOperatorData = make(map[string]map[string]ClusterData)
 		}
+	} else {
+		// Secret doesn't exist, create new structure
+		allOperatorData = make(map[string]map[string]ClusterData)
 	}
 
 	// Add/update this operator's data
@@ -431,18 +449,18 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		},
 	}
 
-	if !secretExists {
-		// Create new secret
-		err = r.Create(ctx, secret)
-		if err != nil {
-			return fmt.Errorf("failed to create secret: %w", err)
-		}
-	} else {
+	if secretExists {
 		// Update existing secret
 		existingSecret.Data = secret.Data
 		err = r.Update(ctx, existingSecret)
 		if err != nil {
 			return fmt.Errorf("failed to update secret: %w", err)
+		}
+	} else {
+		// Create new secret
+		err = r.Create(ctx, secret)
+		if err != nil {
+			return fmt.Errorf("failed to create secret: %w", err)
 		}
 	}
 

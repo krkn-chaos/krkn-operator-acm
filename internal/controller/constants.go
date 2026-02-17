@@ -28,4 +28,7 @@ const (
 
 	// DefaultConfigMapName is the default name of the ConfigMap holding provider configuration
 	DefaultConfigMapName = "krkn-operator-acm-config"
+
+	// ACMDefaultSecret is the default secret name used for ACM managed cluster authentication
+	ACMDefaultSecret = "application-manager"
 )

@@ -3,8 +3,8 @@ module github.com/krkn-chaos/krkn-operator-acm
 go 1.25
 
 require (
-	github.com/krkn-chaos/krkn-operator v0.0.0-20260216133253-d966d8bc025a
-	github.com/krkn-chaos/krknctl v0.10.15-beta
+	github.com/krkn-chaos/krkn-operator v0.0.0-20260217101345-2c055493a7c1
+	github.com/krkn-chaos/krknctl v0.10.16-beta
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.38.0
 	k8s.io/api v0.33.0

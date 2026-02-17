@@ -36,6 +36,26 @@ rules:
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
+  - krknoperatortargetproviderconfigs
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - krkn.krkn-chaos.dev
+  resources:
+  - krknoperatortargetproviderconfigs/status
+  - krknoperatortargetproviders/status
+  - krkntargetrequests/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - krkn.krkn-chaos.dev
+  resources:
   - krknoperatortargetproviders
   - krkntargetrequests
   verbs:
@@ -46,15 +66,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - krkn.krkn-chaos.dev
-  resources:
-  - krknoperatortargetproviders/status
-  - krkntargetrequests/status
-  verbs:
-  - get
-  - patch
-  - update
 - apiGroups:
   - krkn.krkn-chaos.dev
   resources:
