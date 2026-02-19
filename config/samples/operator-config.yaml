@@ -6,7 +6,7 @@ metadata:
   namespace: krkn-operator-system
 data:
   operator-name: "krkn-operator-acm"
-  operator-namespace: "krkn-operator-system"
+  # Note: operator-namespace comes from POD_NAMESPACE env var (injected by deployment)
   # Future configuration options can be added here
   # For example:
   # heartbeat-interval: "30s"

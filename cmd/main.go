@@ -74,7 +74,9 @@ type OperatorConfig struct {
 	OperatorNamespace string
 }
 
-// getOperatorConfig reads the operator configuration from the ConfigMap or environment variables
+// getOperatorConfig reads the operator configuration from environment variables and ConfigMap
+// operator-namespace comes from POD_NAMESPACE env var (injected by deployment)
+// operator-name can be overridden via OPERATOR_NAME env var or ConfigMap
 func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultNamespace string) (*OperatorConfig, error) {
 	config := &OperatorConfig{
 		OperatorName:      "krkn-operator-acm", // Default
@@ -113,18 +115,12 @@ func getOperatorConfig(ctx context.Context, k8sClient client.Client, defaultName
 		return nil, err
 	}
 
-	// Override with ConfigMap values if not set by environment
+	// Override operator name with ConfigMap value if not set by environment
+	// Note: operator-namespace comes from POD_NAMESPACE only (injected by deployment)
 	if envName == "" {
 		if operatorName, ok := configMap.Data["operator-name"]; ok && operatorName != "" {
 			config.OperatorName = operatorName
 			setupLog.Info("loaded operator name from ConfigMap", "operator-name", operatorName)
-		}
-	}
-
-	if envNamespace == "" {
-		if operatorNamespace, ok := configMap.Data["operator-namespace"]; ok && operatorNamespace != "" {
-			config.OperatorNamespace = operatorNamespace
-			setupLog.Info("loaded operator namespace from ConfigMap", "operator-namespace", operatorNamespace)
 		}
 	}
 

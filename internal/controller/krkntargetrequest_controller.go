@@ -39,6 +39,7 @@ import (
 
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
+	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 )
 
 const (
@@ -294,6 +295,26 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	logger.Info("successfully updated krknTargetRequest", "UUID", krknRequest.Spec.UUID, "status", krknRequest.Status.Status)
+
+	// Cleanup old KrknTargetRequest resources
+	deletedCount, err := provider.CleanupOldResources(
+		ctx,
+		r.Client,
+		&krknv1alpha1.KrknTargetRequestList{},
+		r.OperatorNamespace,
+		CleanupThresholdSeconds,
+		func(obj client.Object) *metav1.Time {
+			request := obj.(*krknv1alpha1.KrknTargetRequest)
+			return request.Status.Created
+		},
+	)
+	if err != nil {
+		logger.Error(err, "failed to cleanup old KrknTargetRequest resources")
+		// Don't fail the reconciliation due to cleanup errors
+	} else if deletedCount > 0 {
+		logger.Info("cleaned up old KrknTargetRequest resources", "count", deletedCount)
+	}
+
 	return ctrl.Result{}, nil
 }
 

@@ -38,6 +38,7 @@ rules:
   resources:
   - krknoperatortargetproviderconfigs
   verbs:
+  - delete
   - get
   - list
   - patch

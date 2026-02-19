@@ -27,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -48,7 +49,7 @@ type KrknOperatorTargetProviderConfigReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviderconfigs,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviderconfigs,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krknoperatortargetproviderconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=list
 // +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
@@ -98,6 +99,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		r.OperatorName,
 		DefaultConfigMapName,
 		jsonSchema,
+		r.OperatorNamespace,
 	)
 	if err != nil {
 		// If there's a conflict, requeue to retry with the latest version
@@ -110,6 +112,26 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 	}
 
 	logger.Info("successfully updated provider config", "UUID", freshConfig.Spec.UUID, "operator-name", r.OperatorName)
+
+	// Cleanup old KrknOperatorTargetProviderConfig resources
+	deletedCount, err := provider.CleanupOldResources(
+		ctx,
+		r.Client,
+		&krknv1alpha1.KrknOperatorTargetProviderConfigList{},
+		r.OperatorNamespace,
+		CleanupThresholdSeconds,
+		func(obj client.Object) *metav1.Time {
+			config := obj.(*krknv1alpha1.KrknOperatorTargetProviderConfig)
+			return config.Status.Created
+		},
+	)
+	if err != nil {
+		logger.Error(err, "failed to cleanup old KrknOperatorTargetProviderConfig resources")
+		// Don't fail the reconciliation due to cleanup errors
+	} else if deletedCount > 0 {
+		logger.Info("cleaned up old KrknOperatorTargetProviderConfig resources", "count", deletedCount)
+	}
+
 	return ctrl.Result{}, nil
 }
 

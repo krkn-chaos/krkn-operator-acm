@@ -31,4 +31,8 @@ const (
 
 	// ACMDefaultSecret is the default secret name used for ACM managed cluster authentication
 	ACMDefaultSecret = "application-manager"
+
+	// CleanupThresholdSeconds is the age threshold in seconds for cleaning up old completed KrknTargetRequest
+	// and KrknOperatorTargetProviderConfig resources
+	CleanupThresholdSeconds = 3600 // 1 hour
 )
