@@ -28,3 +28,6 @@ go.work
 
 bin/
 
+# Beads JSON exports (local snapshots from central database)
+beads/
+

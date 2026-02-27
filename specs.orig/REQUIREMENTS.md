@@ -75,7 +75,7 @@ The first target is to build a list of the available secret for each cluster nam
 - - - namespace must be capitalized an - replaced by _
 - - - there must be a method to format the namespace
 -  the field list must be serialized to json and passed to the UpdateProviderConfig as jsonSchema parameter
-- operatorName will come from the same const used to register the KrknOperatorTargetProvider 
+- operatorName will come from the same const used to register the KrknOperatorTargetProvider puoi
 
 ## ConfigMap controller
 I want a controller that reconciles the configuration config map which name is defined in the constraints DefaultConfigMapName.
@@ -84,7 +84,6 @@ Every change in the config map must be reflected in the configstore singleton. T
 ## krkntargetrequest adaptation
 when the kubeconfig is generated instead of selecting "application-manager" as default secret I want that the configstore is queried 
 for the selected target cluster (normalizing the name before making the query) and use the provided secret.
-
 
 
 
