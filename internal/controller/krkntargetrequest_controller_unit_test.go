@@ -19,6 +19,7 @@ Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,11 +47,11 @@ func TestGetConfiguredSecretName(t *testing.T) {
 	store.Delete("ACM_SECRET_TEST_CLUSTER")
 
 	tests := []struct {
-		name                string
-		clusterName         string
-		configuredSecret    string
-		setInConfigstore    bool
-		expectedSecretName  string
+		name               string
+		clusterName        string
+		configuredSecret   string
+		setInConfigstore   bool
+		expectedSecretName string
 	}{
 		{
 			name:               "ConfigStore has custom secret",
@@ -83,6 +84,8 @@ func TestGetConfiguredSecretName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
 			// Setup configstore
 			varName := formatNamespaceToVarName(tt.clusterName)
 			store.Delete(varName)
@@ -92,7 +95,7 @@ func TestGetConfiguredSecretName(t *testing.T) {
 			}
 
 			// Test
-			result := reconciler.getConfiguredSecretName(tt.clusterName)
+			result := reconciler.getConfiguredSecretName(ctx, tt.clusterName)
 
 			// Verify
 			if result != tt.expectedSecretName {

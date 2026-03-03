@@ -42,11 +42,6 @@ import (
 	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 )
 
-const (
-	// StatusCompleted represents a completed target request
-	StatusCompleted = "Completed"
-)
-
 // ManagedCluster represents an ACM managed cluster
 type ManagedCluster struct {
 	APIVersion string `json:"apiVersion"`
@@ -164,6 +159,15 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
+	// Check if this provider itself is active before processing
+	providerList, shouldSkip, result, err := checkProviderActive(ctx, r.Client, logger, r.OperatorName, r.OperatorNamespace)
+	if err != nil {
+		return result, err
+	}
+	if shouldSkip {
+		return result, nil
+	}
+
 	logger.Info("processing krknTargetRequest", "UUID", krknRequest.Spec.UUID)
 
 	// Get managed clusters
@@ -192,7 +196,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		clusterCABundle := cluster.Spec.ManagedClusterClientConfigs[0].CABundle
 
 		// Get the configured secret from configstore, or use default
-		secretName := r.getConfiguredSecretName(clusterName)
+		secretName := r.getConfiguredSecretName(ctx, clusterName)
 		secret, err := r.getClusterSecret(ctx, clusterName, secretName)
 		if err != nil {
 			logger.Error(err, "failed to get cluster secret", "cluster", clusterName, "secret", secretName)
@@ -229,7 +233,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// Create secret with managed clusters data
-	err = r.createManagedClustersSecret(ctx, krknRequest.Spec.UUID, clustersData)
+	err = r.createManagedClustersSecret(ctx, krknRequest, clustersData)
 	if err != nil {
 		logger.Error(err, "failed to create managed clusters secret")
 		return ctrl.Result{}, err
@@ -247,22 +251,8 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	logger.Info("set target data for operator", "operator-name", r.OperatorName, "target-count", len(targetData))
 
-	// Count the number of active KrknOperatorTargetProviders in the operator's namespace
-	providerList := &krknv1alpha1.KrknOperatorTargetProviderList{}
-	err = r.List(ctx, providerList, client.InNamespace(r.OperatorNamespace))
-	if err != nil {
-		logger.Error(err, "failed to list KrknOperatorTargetProviders", "namespace", r.OperatorNamespace)
-		return ctrl.Result{}, err
-	}
-
-	// Count only active providers
-	activeProviderCount := 0
-	for _, provider := range providerList.Items {
-		if provider.Spec.Active {
-			activeProviderCount++
-		}
-	}
-
+	// Count only active providers (providerList was already fetched earlier)
+	activeProviderCount := countActiveProviders(providerList)
 	contributorCount := len(krknRequest.Status.TargetData)
 
 	logger.Info("provider status",
@@ -273,7 +263,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		"provider-namespaces", getProviderNamespaces(providerList.Items))
 
 	// Check if all active providers have contributed
-	if activeProviderCount > 0 && contributorCount >= activeProviderCount {
+	if shouldMarkAsCompleted(activeProviderCount, contributorCount) {
 		completedTime := metav1.Now()
 		krknRequest.Status.Status = StatusCompleted
 		krknRequest.Status.Completed = &completedTime
@@ -352,7 +342,8 @@ func (r *KrknTargetRequestReconciler) getManagedClusters(ctx context.Context) (*
 // getConfiguredSecretName determines which secret to use for a cluster
 // by querying the configstore for ACM_SECRET_<CLUSTER_NAME>
 // Falls back to ACMDefaultSecret if not configured
-func (r *KrknTargetRequestReconciler) getConfiguredSecretName(clusterName string) string {
+func (r *KrknTargetRequestReconciler) getConfiguredSecretName(ctx context.Context, clusterName string) string {
+	logger := log.FromContext(ctx)
 	store := kvstore.Get()
 
 	// Normalize cluster name to variable format
@@ -360,10 +351,17 @@ func (r *KrknTargetRequestReconciler) getConfiguredSecretName(clusterName string
 
 	// Query configstore
 	if secretName, ok := store.GetValue(varName); ok && secretName != "" {
+		logger.Info("using configured secret for cluster",
+			"cluster", clusterName,
+			"secret", secretName,
+			"config-key", varName)
 		return secretName
 	}
 
 	// Fallback to default
+	logger.Info("using default secret for cluster",
+		"cluster", clusterName,
+		"secret", ACMDefaultSecret)
 	return ACMDefaultSecret
 }
 
@@ -410,9 +408,9 @@ users:
 // createManagedClustersSecret creates or updates a secret containing managed clusters data
 // The secret format is: map[operator-name]map[cluster-name]ClusterData
 // This allows multiple operators to contribute their cluster data without conflicts
-func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Context, uuid string, clustersData map[string]ClusterData) error {
+func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Context, krknRequest *krknv1alpha1.KrknTargetRequest, clustersData map[string]ClusterData) error {
 	secretNamespace := r.OperatorNamespace
-	secretName := uuid
+	secretName := krknRequest.Spec.UUID
 
 	// Check if secret already exists
 	existingSecret := &corev1.Secret{}
@@ -470,9 +468,15 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		},
 	}
 
+	// Set owner reference to enable automatic cleanup when KrknTargetRequest is deleted
+	if err := ctrl.SetControllerReference(krknRequest, secret, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set owner reference on secret: %w", err)
+	}
+
 	if secretExists {
 		// Update existing secret
 		existingSecret.Data = secret.Data
+		existingSecret.ObjectMeta.OwnerReferences = secret.ObjectMeta.OwnerReferences
 		err = r.Update(ctx, existingSecret)
 		if err != nil {
 			return fmt.Errorf("failed to update secret: %w", err)

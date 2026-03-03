@@ -706,4 +706,90 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Context("OwnerReference Management", func() {
+		var (
+			ctx         context.Context
+			testRequest *krknv1alpha1.KrknTargetRequest
+		)
+
+		BeforeEach(func() {
+			ctx = context.Background()
+		})
+
+		AfterEach(func() {
+			// Cleanup request (secret should be auto-deleted via ownerReference)
+			if testRequest != nil {
+				_ = k8sClient.Delete(ctx, testRequest)
+			}
+		})
+
+		It("should set ownerReference on created secret", func() {
+			By("Creating a KrknTargetRequest")
+			testRequest = &krknv1alpha1.KrknTargetRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-owner-reference",
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						"krkn.krkn-chaos.dev/uuid": "test-uuid-owner",
+					},
+				},
+				Spec: krknv1alpha1.KrknTargetRequestSpec{
+					UUID: "test-uuid-owner",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testRequest)).To(Succeed())
+
+			By("Creating reconciler and preparing test data")
+			reconciler := &KrknTargetRequestReconciler{
+				Client:            k8sClient,
+				Scheme:            k8sClient.Scheme(),
+				OperatorName:      "krkn-operator-acm",
+				OperatorNamespace: testNamespace,
+			}
+
+			clustersData := map[string]ClusterData{
+				"test-cluster": {
+					ClusterName: "test-cluster",
+					ClusterAPI:  "https://api.test.com:6443",
+					Kubeconfig:  "ZmFrZS1rdWJlY29uZmln", // base64 "fake-kubeconfig"
+				},
+			}
+
+			By("Creating secret with ownerReference")
+			err := reconciler.createManagedClustersSecret(ctx, testRequest, clustersData)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying secret exists")
+			secret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      testRequest.Spec.UUID,
+				Namespace: testNamespace,
+			}, secret)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ownerReference is set correctly")
+			Expect(secret.ObjectMeta.OwnerReferences).To(HaveLen(1))
+			ownerRef := secret.ObjectMeta.OwnerReferences[0]
+			Expect(ownerRef.APIVersion).To(Equal("krkn.krkn-chaos.dev/v1alpha1"))
+			Expect(ownerRef.Kind).To(Equal("KrknTargetRequest"))
+			Expect(ownerRef.Name).To(Equal(testRequest.Name))
+			Expect(ownerRef.UID).To(Equal(testRequest.UID))
+			Expect(*ownerRef.Controller).To(BeTrue())
+			Expect(*ownerRef.BlockOwnerDeletion).To(BeTrue())
+
+			By("Deleting KrknTargetRequest")
+			err = k8sClient.Delete(ctx, testRequest)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying secret is automatically deleted")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      testRequest.Spec.UUID,
+					Namespace: testNamespace,
+				}, secret)
+				return err != nil
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
 })
