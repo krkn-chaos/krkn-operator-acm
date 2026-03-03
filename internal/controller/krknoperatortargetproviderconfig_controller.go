@@ -71,6 +71,72 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		return ctrl.Result{}, err
 	}
 
+	// Initialize status to "pending" if it's empty (new resource)
+	if config.Status.Status == "" {
+		logger.Info("initializing status to pending", "UUID", config.Spec.UUID)
+
+		// Add UUID label if not present
+		if config.Labels == nil {
+			config.Labels = make(map[string]string)
+		}
+
+		needsLabelUpdate := false
+		if _, exists := config.Labels["krkn.krkn-chaos.dev/uuid"]; !exists {
+			config.Labels["krkn.krkn-chaos.dev/uuid"] = config.Spec.UUID
+			needsLabelUpdate = true
+		}
+
+		// Update labels if needed
+		if needsLabelUpdate {
+			err = r.Update(ctx, config)
+			if err != nil {
+				if errors.IsConflict(err) {
+					logger.Info("conflict updating labels, will retry")
+					return ctrl.Result{Requeue: true}, nil
+				}
+				logger.Error(err, "failed to add UUID label")
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Update status
+		now := metav1.Now()
+		config.Status.Status = "pending"
+		config.Status.Created = &now
+		err = r.Status().Update(ctx, config)
+		if err != nil {
+			if errors.IsConflict(err) {
+				logger.Info("conflict initializing status, will retry")
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "failed to initialize status")
+			return ctrl.Result{}, err
+		}
+		// Return empty result to allow natural reconciliation
+		return ctrl.Result{}, nil
+	}
+
+	// Check if the config is already completed
+	if config.Status.Status == StatusCompleted {
+		logger.Info("krknOperatorTargetProviderConfig already completed", "UUID", config.Spec.UUID)
+		return ctrl.Result{}, nil
+	}
+
+	// Check if status is pending
+	if config.Status.Status != "pending" {
+		logger.Info("krknOperatorTargetProviderConfig status is not pending, skipping", "status", config.Status.Status)
+		return ctrl.Result{}, nil
+	}
+
+	// Check if this provider itself is active before processing
+	providerList, shouldSkip, result, err := checkProviderActive(ctx, r.Client, logger, r.OperatorName, r.OperatorNamespace)
+	if err != nil {
+		return result, err
+	}
+	if shouldSkip {
+		return result, nil
+	}
+
 	logger.Info("processing KrknOperatorTargetProviderConfig", "UUID", config.Spec.UUID)
 
 	// Build the configuration schema based on ACM managed clusters and their secrets
@@ -98,8 +164,8 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		freshConfig,
 		r.OperatorName,
 		DefaultConfigMapName,
-		jsonSchema,
 		r.OperatorNamespace,
+		jsonSchema,
 	)
 	if err != nil {
 		// If there's a conflict, requeue to retry with the latest version
@@ -111,7 +177,48 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("successfully updated provider config", "UUID", freshConfig.Spec.UUID, "operator-name", r.OperatorName)
+	// Re-fetch to get the updated config with all provider contributions
+	updatedConfig := &krknv1alpha1.KrknOperatorTargetProviderConfig{}
+	err = r.Get(ctx, req.NamespacedName, updatedConfig)
+	if err != nil {
+		logger.Error(err, "failed to re-fetch updated config")
+		return ctrl.Result{}, err
+	}
+
+	// Count only active providers (providerList was already fetched earlier)
+	activeProviderCount := countActiveProviders(providerList)
+	contributorCount := len(updatedConfig.Status.ConfigData)
+
+	logger.Info("provider status",
+		"total-providers", len(providerList.Items),
+		"active-providers", activeProviderCount,
+		"contributors", contributorCount,
+		"contributor-names", getConfigDataKeys(updatedConfig.Status.ConfigData),
+		"provider-namespaces", getProviderNamespaces(providerList.Items))
+
+	// Check if all active providers have contributed
+	if shouldMarkAsCompleted(activeProviderCount, contributorCount) {
+		completedTime := metav1.Now()
+		updatedConfig.Status.Status = StatusCompleted
+		updatedConfig.Status.Completed = &completedTime
+		logger.Info("all active providers have contributed, marking as completed", "UUID", updatedConfig.Spec.UUID)
+	} else {
+		logger.Info("waiting for more providers to contribute",
+			"needed", activeProviderCount,
+			"current", contributorCount)
+	}
+
+	err = r.Status().Update(ctx, updatedConfig)
+	if err != nil {
+		if errors.IsConflict(err) {
+			logger.Info("conflict updating status, will retry", "UUID", updatedConfig.Spec.UUID)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error(err, "failed to update KrknOperatorTargetProviderConfig status")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("successfully updated provider config", "UUID", updatedConfig.Spec.UUID, "operator-name", r.OperatorName, "status", updatedConfig.Status.Status)
 
 	// Cleanup old KrknOperatorTargetProviderConfig resources
 	deletedCount, err := provider.CleanupOldResources(
@@ -178,7 +285,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		separator := ","
 		allowedValues := strings.Join(secrets, ",")
 
-		// Build the InputField
+		// Build the InputField using typing package
 		field := typing.InputField{
 			Name:             &varName,
 			ShortDescription: &shortDesc,
@@ -196,8 +303,19 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		logger.Info("added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
 	}
 
-	// Serialize fields to JSON
-	jsonData, err := json.Marshal(fields)
+	// Serialize fields to JSON using InputField.MarshalJSON
+	// which preserves the format expected by the parser
+	var jsonFields []json.RawMessage
+	for _, field := range fields {
+		fieldJSON, err := field.MarshalJSON()
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal field %s: %w", *field.Name, err)
+		}
+		jsonFields = append(jsonFields, fieldJSON)
+	}
+
+	// Marshal the array of raw JSON messages
+	jsonData, err := json.Marshal(jsonFields)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal config schema: %w", err)
 	}
@@ -309,6 +427,15 @@ func (r *KrknOperatorTargetProviderConfigReconciler) getManagedClusters(ctx cont
 	}
 
 	return managedClusterList, nil
+}
+
+// getConfigDataKeys returns a slice of keys from the ConfigData map
+func getConfigDataKeys(m map[string]krknv1alpha1.ProviderConfigData) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // SetupWithManager sets up the controller with the Manager.
