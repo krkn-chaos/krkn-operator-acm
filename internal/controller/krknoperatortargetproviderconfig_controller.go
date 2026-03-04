@@ -364,7 +364,7 @@ func hasRequiredKeys(data map[string][]byte) bool {
 
 // getDefaultSecret determines the default secret from a list
 // Priority order:
-// 1. Value from configstore for ACM_SECRET_<NAMESPACE> (if exists and valid)
+// 1. Value from configstore for ACM_SECRET_<NAMESPACE> (if exists, valid, and DIFFERENT from ACMDefaultSecret)
 // 2. "application-manager" (if present in the list)
 // 3. First secret in the list
 func getDefaultSecret(namespace string, secrets []string) string {
@@ -378,13 +378,16 @@ func getDefaultSecret(namespace string, secrets []string) string {
 	// Check if there's a configured value in configstore
 	varName := formatNamespaceToVarName(namespace)
 	if configuredValue, ok := store.GetValue(varName); ok && configuredValue != "" {
-		// Verify the configured value is in the available secrets list
-		for _, secret := range secrets {
-			if secret == configuredValue {
-				return configuredValue
+		// Only use configstore value if it's DIFFERENT from ACMDefaultSecret
+		if configuredValue != ACMDefaultSecret {
+			// Verify the configured value is in the available secrets list
+			for _, secret := range secrets {
+				if secret == configuredValue {
+					return configuredValue
+				}
 			}
 		}
-		// If configured value is not in the list, fall through to next priority
+		// If configured value is ACMDefaultSecret or not in the list, fall through to next priority
 	}
 
 	// Check if ACMDefaultSecret is in the list
