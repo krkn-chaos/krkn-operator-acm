@@ -20,6 +20,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -71,14 +72,44 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Sync all values from ConfigMap to configstore
 	for key, value := range configMap.Data {
-		oldValue, exists := store.GetValue(key)
-		if !exists || oldValue != value {
-			store.SetValue(key, value)
-			logger.Info("updated config value",
-				"key", key,
-				"old", oldValue,
-				"new", value,
-				"is-new", !exists)
+		// If the key is "config.yaml", parse the content line by line
+		if key == "config.yaml" {
+			lines := strings.Split(value, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				// Split by comma to get KEY,VALUE
+				parts := strings.SplitN(line, ",", 2)
+				if len(parts) != 2 {
+					logger.Info("skipping invalid line in config.yaml", "line", line)
+					continue
+				}
+				configKey := strings.TrimSpace(parts[0])
+				configValue := strings.TrimSpace(parts[1])
+
+				oldValue, exists := store.GetValue(configKey)
+				if !exists || oldValue != configValue {
+					store.SetValue(configKey, configValue)
+					logger.Info("updated config value from config.yaml",
+						"key", configKey,
+						"old", oldValue,
+						"new", configValue,
+						"is-new", !exists)
+				}
+			}
+		} else {
+			// For other keys, store as-is
+			oldValue, exists := store.GetValue(key)
+			if !exists || oldValue != value {
+				store.SetValue(key, value)
+				logger.Info("updated config value",
+					"key", key,
+					"old", oldValue,
+					"new", value,
+					"is-new", !exists)
+			}
 		}
 	}
 
