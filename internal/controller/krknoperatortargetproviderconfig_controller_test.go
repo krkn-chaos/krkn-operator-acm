@@ -33,13 +33,13 @@ func TestGetDefaultSecret(t *testing.T) {
 	store.Delete("ACM_SECRET_MANAGED_CLUSTER_KRKN")
 
 	tests := []struct {
-		name              string
-		namespace         string
-		secrets           []string
-		configstoreValue  string
-		setConfigstore    bool
-		expectedDefault   string
-		description       string
+		name             string
+		namespace        string
+		secrets          []string
+		configstoreValue string
+		setConfigstore   bool
+		expectedDefault  string
+		description      string
 	}{
 		{
 			name:            "Empty secrets list",
