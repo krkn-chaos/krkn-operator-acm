@@ -468,9 +468,15 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		},
 	}
 
+	// Set owner reference to enable automatic cleanup when KrknTargetRequest is deleted
+	if err := ctrl.SetControllerReference(krknRequest, secret, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set owner reference on secret: %w", err)
+	}
+
 	if secretExists {
 		// Update existing secret
 		existingSecret.Data = secret.Data
+		existingSecret.ObjectMeta.OwnerReferences = secret.ObjectMeta.OwnerReferences
 		err = r.Update(ctx, existingSecret)
 		if err != nil {
 			return fmt.Errorf("failed to update secret: %w", err)
@@ -479,7 +485,20 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		// Create new secret
 		err = r.Create(ctx, secret)
 		if err != nil {
-			return fmt.Errorf("failed to create secret: %w", err)
+			// Handle race condition: secret was created between check and create
+			if errors.IsAlreadyExists(err) {
+				// Fetch the now-existing secret and update it
+				if getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNamespace}, existingSecret); getErr != nil {
+					return fmt.Errorf("failed to get secret after AlreadyExists: %w", getErr)
+				}
+				existingSecret.Data = secret.Data
+				existingSecret.ObjectMeta.OwnerReferences = secret.ObjectMeta.OwnerReferences
+				if updateErr := r.Update(ctx, existingSecret); updateErr != nil {
+					return fmt.Errorf("failed to update secret after AlreadyExists: %w", updateErr)
+				}
+			} else {
+				return fmt.Errorf("failed to create secret: %w", err)
+			}
 		}
 	}
 
