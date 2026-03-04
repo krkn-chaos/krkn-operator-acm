@@ -347,8 +347,6 @@ func (r *KrknTargetRequestReconciler) getConfiguredSecretName(ctx context.Contex
 
 	// Normalize cluster name to variable format
 	varName := formatNamespaceToVarName(clusterName)
-	sn, mimm := store.GetValue(varName)
-	fmt.Sprintf("%s %m", sn, mimm)
 	// Query configstore
 	if secretName, ok := store.GetValue(varName); ok && secretName != "" {
 		logger.Info("using configured secret for cluster",

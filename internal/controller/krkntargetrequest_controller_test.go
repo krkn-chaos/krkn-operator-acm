@@ -119,8 +119,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				By("Updating status with initial data")
 				testRequest.Status = krknv1alpha1.KrknTargetRequestStatus{
 					Status:  "pending",
-					Created: &metav1.Time{Time: time.Now()},
-					TargetData: map[string][]krknv1alpha1.ClusterTarget{
+						TargetData: map[string][]krknv1alpha1.ClusterTarget{
 						"krkn-operator-acm": {
 							{
 								ClusterName:   "test-cluster",
@@ -226,8 +225,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				By("Updating status with first operator's data")
 				testRequest.Status = krknv1alpha1.KrknTargetRequestStatus{
 					Status:  "pending",
-					Created: &metav1.Time{Time: time.Now()},
-					TargetData: map[string][]krknv1alpha1.ClusterTarget{
+						TargetData: map[string][]krknv1alpha1.ClusterTarget{
 						"krkn-operator-acm": {
 							{
 								ClusterName:   "cluster1",
@@ -347,8 +345,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				By("Updating status with active operator's data")
 				testRequest.Status = krknv1alpha1.KrknTargetRequestStatus{
 					Status:  "pending",
-					Created: &metav1.Time{Time: time.Now()},
-					TargetData: map[string][]krknv1alpha1.ClusterTarget{
+						TargetData: map[string][]krknv1alpha1.ClusterTarget{
 						"krkn-operator-acm": {
 							{
 								ClusterName:   "active-cluster",
@@ -456,8 +453,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				Expect(k8sClient.Create(ctx, provider1)).To(Succeed())
 
 				By("Creating a KrknTargetRequest with created timestamp")
-				createdTime := metav1.Now()
-				testRequest = &krknv1alpha1.KrknTargetRequest{
+					testRequest = &krknv1alpha1.KrknTargetRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-timestamps",
 						Namespace: testNamespace,
@@ -474,8 +470,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				By("Updating status with created timestamp")
 				testRequest.Status = krknv1alpha1.KrknTargetRequestStatus{
 					Status:  "pending",
-					Created: &createdTime,
-					TargetData: map[string][]krknv1alpha1.ClusterTarget{
+						TargetData: map[string][]krknv1alpha1.ClusterTarget{
 						"krkn-operator-acm": {
 							{
 								ClusterName:   "test-cluster",
@@ -560,8 +555,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 				By("Updating status with both operators' data")
 				testRequest.Status = krknv1alpha1.KrknTargetRequestStatus{
 					Status:  "pending",
-					Created: &metav1.Time{Time: time.Now()},
-					TargetData: map[string][]krknv1alpha1.ClusterTarget{
+						TargetData: map[string][]krknv1alpha1.ClusterTarget{
 						"krkn-operator-acm": {
 							{
 								ClusterName:   "acm-cluster-1",
@@ -660,8 +654,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 					},
 					Status: krknv1alpha1.KrknTargetRequestStatus{
 						Status:     "pending",
-						Created:    &metav1.Time{Time: time.Now()},
-						TargetData: make(map[string][]krknv1alpha1.ClusterTarget),
+							TargetData: make(map[string][]krknv1alpha1.ClusterTarget),
 					},
 				}
 				Expect(k8sClient.Create(ctx, testRequest)).To(Succeed())

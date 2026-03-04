@@ -20,7 +20,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	"github.com/krkn-chaos/krkn-operator/pkg/configmap"
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
 
@@ -52,66 +52,28 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	store := kvstore.Get()
 
 	// Fetch the ConfigMap
-	configMap := &corev1.ConfigMap{}
-	err := r.Get(ctx, req.NamespacedName, configMap)
-	if err != nil {
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, req.NamespacedName, cm); err != nil {
 		if errors.IsNotFound(err) {
-			logger.Info("configMap not found, keeping existing configstore values",
+			logger.Info("configmap not found, keeping existing kvstore values",
 				"name", req.Name,
 				"namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "failed to get ConfigMap")
+		logger.Error(err, "failed to get configmap")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("syncing ConfigMap to configstore",
-		"name", configMap.Name,
-		"namespace", configMap.Namespace,
-		"keys-count", len(configMap.Data))
-
-	// Sync all values from ConfigMap to configstore
-	for key, value := range configMap.Data {
-		// If the key is "config.yaml", parse the content line by line
-		if key == "config.yaml" {
-			lines := strings.Split(value, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				// Split by comma to get KEY,VALUE
-				parts := strings.SplitN(line, ",", 2)
-				if len(parts) != 2 {
-					logger.Info("skipping invalid line in config.yaml", "line", line)
-					continue
-				}
-				configKey := strings.TrimSpace(parts[0])
-				configValue := strings.TrimSpace(parts[1])
-
-				oldValue, exists := store.GetValue(configKey)
-				if !exists || oldValue != configValue {
-					store.SetValue(configKey, configValue)
-					logger.Info("updated config value from config.yaml",
-						"key", configKey,
-						"old", oldValue,
-						"new", configValue,
-						"is-new", !exists)
-				}
-			}
-		} else {
-			// For other keys, store as-is
-			oldValue, exists := store.GetValue(key)
-			if !exists || oldValue != value {
-				store.SetValue(key, value)
-				logger.Info("updated config value",
-					"key", key,
-					"old", oldValue,
-					"new", value,
-					"is-new", !exists)
-			}
-		}
+	// Sync ConfigMap to kvstore using shared function
+	if err := configmap.SyncConfigMapToStore(cm, store); err != nil {
+		logger.Error(err, "failed to sync configmap to kvstore")
+		return ctrl.Result{}, err
 	}
+
+	logger.Info("synced configmap to kvstore",
+		"name", cm.Name,
+		"namespace", cm.Namespace,
+		"keys", len(cm.Data))
 
 	return ctrl.Result{}, nil
 }

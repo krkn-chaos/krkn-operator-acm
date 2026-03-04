@@ -26,8 +26,9 @@ const (
 	// - Setting target data in KrknTargetRequest status
 	OperatorName = "krkn-operator-acm"
 
-	// DefaultConfigMapName is the default name of the ConfigMap holding provider configuration
-	DefaultConfigMapName = "krkn-operator-acm-config"
+	// ACMIntegrationConfigMapName is the name of the ConfigMap holding ACM integration configuration
+	// This ConfigMap contains ACM-specific settings, not general operator configuration
+	ACMIntegrationConfigMapName = "krkn-operator-acm-config"
 
 	// ACMDefaultSecret is the default secret name used for ACM managed cluster authentication
 	ACMDefaultSecret = "application-manager"
@@ -35,4 +36,7 @@ const (
 	// CleanupThresholdSeconds is the age threshold in seconds for cleaning up old completed KrknTargetRequest
 	// and KrknOperatorTargetProviderConfig resources
 	CleanupThresholdSeconds = 3600 // 1 hour
+
+	// StatusCompleted represents a completed resource status
+	StatusCompleted = "Completed"
 )

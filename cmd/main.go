@@ -47,6 +47,7 @@ import (
 
 	"github.com/krkn-chaos/krkn-operator-acm/internal/controller"
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
+	"github.com/krkn-chaos/krkn-operator/pkg/configmap"
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 	"github.com/krkn-chaos/krkn-operator/pkg/provider"
 	// +kubebuilder:scaffold:imports
@@ -149,6 +150,33 @@ func (r *ConfigLoaderRunnable) Start(ctx context.Context) error {
 	setupLog.Info("configuration loaded",
 		"operator-name", config.OperatorName,
 		"operator-namespace", config.OperatorNamespace)
+
+	// Initialize kvstore from ACM integration ConfigMap
+	store := kvstore.Get()
+	acmConfigMap := &corev1.ConfigMap{}
+	err = r.Client.Get(ctx, types.NamespacedName{
+		Name:      controller.ACMIntegrationConfigMapName,
+		Namespace: config.OperatorNamespace,
+	}, acmConfigMap)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			setupLog.Info("acm integration configMap not found at startup, kvstore will use defaults",
+				"configmap", controller.ACMIntegrationConfigMapName,
+				"namespace", config.OperatorNamespace)
+		} else {
+			setupLog.Error(err, "failed to load acm integration configMap at startup")
+			return err
+		}
+	} else {
+		if err := configmap.SyncConfigMapToStore(acmConfigMap, store); err != nil {
+			setupLog.Error(err, "failed to sync acm integration configMap to kvstore at startup")
+			return err
+		}
+		setupLog.Info("initialized kvstore from acm integration configMap",
+			"configmap", controller.ACMIntegrationConfigMapName,
+			"keys", len(acmConfigMap.Data))
+	}
 
 	// Update reconcilers with loaded config
 	r.TargetRequestReconciler.OperatorName = config.OperatorName
@@ -360,7 +388,7 @@ func main() {
 	configMapReconciler := &controller.ConfigMapReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
-		ConfigMapName:      controller.DefaultConfigMapName,
+		ConfigMapName:      controller.ACMIntegrationConfigMapName,
 		ConfigMapNamespace: defaultNamespace,
 	}
 
@@ -370,7 +398,7 @@ func main() {
 		os.Exit(1)
 	}
 	setupLog.Info("configMap controller configured",
-		"configmap-name", controller.DefaultConfigMapName,
+		"configmap-name", controller.ACMIntegrationConfigMapName,
 		"namespace", defaultNamespace)
 	// +kubebuilder:scaffold:builder
 

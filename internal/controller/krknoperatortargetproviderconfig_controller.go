@@ -163,7 +163,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		r.Client,
 		freshConfig,
 		r.OperatorName,
-		DefaultConfigMapName,
+		ACMIntegrationConfigMapName,
 		r.OperatorNamespace,
 		jsonSchema,
 	)
