@@ -491,7 +491,7 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 					Name:      "test-timestamps",
 					Namespace: testNamespace,
 				}, testRequest)).To(Succeed())
-				Expect(testRequest.Status.Created).NotTo(BeNil())
+				Expect(testRequest.CreationTimestamp.IsZero()).To(BeFalse())
 
 				By("Simulating completion with completed timestamp")
 				time.Sleep(100 * time.Millisecond) // Ensure time has passed
@@ -510,11 +510,11 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 					Namespace: testNamespace,
 				}, testRequest)).To(Succeed())
 				Expect(testRequest.Status.Completed).NotTo(BeNil())
-				Expect(testRequest.Status.Created).NotTo(BeNil())
+				Expect(testRequest.CreationTimestamp.IsZero()).To(BeFalse())
 				// metav1.Time timestamps are truncated to second precision by etcd,
-				// so we check that completed is not before created (i.e., >= created)
-				Expect(testRequest.Status.Created.Time.Before(testRequest.Status.Completed.Time) ||
-					testRequest.Status.Created.Time.Equal(testRequest.Status.Completed.Time)).To(BeTrue())
+				// so we check that completed is not before creation (i.e., >= creation)
+				Expect(testRequest.CreationTimestamp.Time.Before(testRequest.Status.Completed.Time) ||
+					testRequest.CreationTimestamp.Time.Equal(testRequest.Status.Completed.Time)).To(BeTrue())
 			})
 		})
 

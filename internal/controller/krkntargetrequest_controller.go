@@ -131,9 +131,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 
 		// Update status
-		now := metav1.Now()
 		krknRequest.Status.Status = "pending"
-		krknRequest.Status.Created = &now
 		err = r.Status().Update(ctx, krknRequest)
 		if err != nil {
 			if errors.IsConflict(err) {
@@ -294,8 +292,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		r.OperatorNamespace,
 		CleanupThresholdSeconds,
 		func(obj client.Object) *metav1.Time {
-			request := obj.(*krknv1alpha1.KrknTargetRequest)
-			return request.Status.Created
+			// Use CreationTimestamp from metadata since Status.Created was removed
+			ts := obj.GetCreationTimestamp()
+			return &ts
 		},
 	)
 	if err != nil {
@@ -348,7 +347,8 @@ func (r *KrknTargetRequestReconciler) getConfiguredSecretName(ctx context.Contex
 
 	// Normalize cluster name to variable format
 	varName := formatNamespaceToVarName(clusterName)
-
+	sn, mimm := store.GetValue(varName)
+	fmt.Sprintf("%s %m", sn, mimm)
 	// Query configstore
 	if secretName, ok := store.GetValue(varName); ok && secretName != "" {
 		logger.Info("using configured secret for cluster",
@@ -468,15 +468,9 @@ func (r *KrknTargetRequestReconciler) createManagedClustersSecret(ctx context.Co
 		},
 	}
 
-	// Set owner reference to enable automatic cleanup when KrknTargetRequest is deleted
-	if err := ctrl.SetControllerReference(krknRequest, secret, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set owner reference on secret: %w", err)
-	}
-
 	if secretExists {
 		// Update existing secret
 		existingSecret.Data = secret.Data
-		existingSecret.ObjectMeta.OwnerReferences = secret.ObjectMeta.OwnerReferences
 		err = r.Update(ctx, existingSecret)
 		if err != nil {
 			return fmt.Errorf("failed to update secret: %w", err)
