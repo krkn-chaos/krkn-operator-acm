@@ -184,22 +184,31 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t $(REGISTRY)/$(IMG_NAME):latest .
+	$(CONTAINER_TOOL) build -t ${IMG} .
+ifeq ($(IMG),$(REGISTRY)/$(IMG_NAME):$(IMG_TAG))
+	@echo "Using default image configuration"
 ifneq ($(strip $(GIT_TAG)),)
-	$(CONTAINER_TOOL) tag $(REGISTRY)/$(IMG_NAME):latest $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
-	@echo "✓ Built and tagged: latest and $(GIT_TAG)"
+	$(CONTAINER_TOOL) tag ${IMG} $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
+	@echo "✓ Built and tagged: ${IMG} and $(GIT_TAG)"
 else
-	@echo "✓ Built and tagged: latest (no git tag found)"
+	@echo "✓ Built: ${IMG} (no git tag found)"
+endif
+else
+	@echo "✓ Built: ${IMG} (custom IMG, git tag logic skipped)"
 endif
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):latest
+	$(CONTAINER_TOOL) push ${IMG}
+ifeq ($(IMG),$(REGISTRY)/$(IMG_NAME):$(IMG_TAG))
 ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
-	@echo "✓ Pushed: latest and $(GIT_TAG)"
+	@echo "✓ Pushed: ${IMG} and $(GIT_TAG)"
 else
-	@echo "✓ Pushed: latest only"
+	@echo "✓ Pushed: ${IMG}"
+endif
+else
+	@echo "✓ Pushed: ${IMG} (custom IMG)"
 endif
 
 .PHONY: podman-build
