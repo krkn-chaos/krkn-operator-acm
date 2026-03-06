@@ -49,8 +49,24 @@ endif
 # Set the Operator SDK version to use. By default, what is installed on the system is used.
 # This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
 OPERATOR_SDK_VERSION ?= v1.41.1
-# Image URL to use all building/pushing image targets
-IMG ?= quay.io/krkn-chaos/krkn-operator:operator-acm
+
+# Component name for this project
+COMPONENT ?= krkn-operator-acm
+
+# Registry configuration
+REGISTRY ?= quay.io/krkn-chaos
+
+# Git tag detection for versioning
+GIT_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null)
+
+# Image tag - defaults to latest, can be overridden
+IMG_TAG ?= latest
+
+# Image name
+IMG_NAME ?= $(COMPONENT)
+
+# Full image URL (can be overridden with IMG=)
+IMG ?= $(REGISTRY)/$(IMG_NAME):$(IMG_TAG)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -168,11 +184,23 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build -t $(REGISTRY)/$(IMG_NAME):latest .
+ifdef GIT_TAG
+	$(CONTAINER_TOOL) tag $(REGISTRY)/$(IMG_NAME):latest $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
+	@echo "✓ Built and tagged: latest and $(GIT_TAG)"
+else
+	@echo "✓ Built and tagged: latest (no git tag found)"
+endif
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
+	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):latest
+ifdef GIT_TAG
+	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
+	@echo "✓ Pushed: latest and $(GIT_TAG)"
+else
+	@echo "✓ Pushed: latest only"
+endif
 
 .PHONY: podman-build
 podman-build: ## Build docker image with the manager using podman.
@@ -207,6 +235,9 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 
 ##@ Deployment
 
+# Namespace for deployment
+NAMESPACE ?= krkn-operator-system
+
 ifndef ignore-not-found
   ignore-not-found = false
 endif
@@ -221,18 +252,15 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	@echo "Checking if namespace krkn-operator-system exists..."
-	@$(KUBECTL) get namespace krkn-operator-system >/dev/null 2>&1 || \
-		(echo "❌ ERROR: Namespace 'krkn-operator-system' does not exist!" && \
-		 echo "" && \
-		 echo "Please create it first with:" && \
-		 echo "  kubectl create namespace krkn-operator-system" && \
-		 echo "" && \
-		 exit 1)
-	@echo "✓ Namespace exists, proceeding with deployment..."
+	@echo "Deploying to namespace: $(NAMESPACE)"
+	@$(KUBECTL) get namespace $(NAMESPACE) >/dev/null 2>&1 || \
+		(echo "Creating namespace $(NAMESPACE)..." && \
+		 $(KUBECTL) create namespace $(NAMESPACE))
+	@echo "✓ Namespace ready"
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	cd config/default && $(KUSTOMIZE) edit set namespace $(NAMESPACE)
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
-	@echo "✓ Deployment complete!"
+	@echo "✓ Deployed to $(NAMESPACE) with image: $(IMG)"
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
