@@ -185,7 +185,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/$(IMG_NAME):latest .
-ifdef GIT_TAG
+ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) tag $(REGISTRY)/$(IMG_NAME):latest $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
 	@echo "✓ Built and tagged: latest and $(GIT_TAG)"
 else
@@ -195,7 +195,7 @@ endif
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):latest
-ifdef GIT_TAG
+ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
 	@echo "✓ Pushed: latest and $(GIT_TAG)"
 else
