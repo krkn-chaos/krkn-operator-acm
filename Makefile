@@ -185,22 +185,21 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
-ifeq ($(IMG),$(REGISTRY)/$(IMG_NAME):$(IMG_TAG))
-	@echo "Using default image configuration"
+ifeq ($(origin IMG)$(origin IMG_TAG)$(origin REGISTRY)$(origin IMG_NAME),filefilefilefile)
 ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) tag ${IMG} $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
 	@echo "✓ Built and tagged: ${IMG} and $(GIT_TAG)"
 else
-	@echo "✓ Built: ${IMG} (no git tag found)"
+	@echo "✓ Built: ${IMG}"
 endif
 else
-	@echo "✓ Built: ${IMG} (custom IMG, git tag logic skipped)"
+	@echo "✓ Built: ${IMG} (override detected, git tag skipped)"
 endif
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
-ifeq ($(IMG),$(REGISTRY)/$(IMG_NAME):$(IMG_TAG))
+ifeq ($(origin IMG)$(origin IMG_TAG)$(origin REGISTRY)$(origin IMG_NAME),filefilefilefile)
 ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) push $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
 	@echo "✓ Pushed: ${IMG} and $(GIT_TAG)"
@@ -208,7 +207,7 @@ else
 	@echo "✓ Pushed: ${IMG}"
 endif
 else
-	@echo "✓ Pushed: ${IMG} (custom IMG)"
+	@echo "✓ Pushed: ${IMG} (override detected, git tag skipped)"
 endif
 
 .PHONY: podman-build
