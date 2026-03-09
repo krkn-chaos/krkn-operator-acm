@@ -80,6 +80,14 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("patching deployment to use IfNotPresent for locally loaded images")
+		cmd = exec.Command("kubectl", "patch", "deployment", "krkn-operator-acm-controller-manager",
+			"-n", namespace,
+			"--type=json",
+			"-p", `[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]`)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch imagePullPolicy")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
