@@ -1,5 +1,9 @@
 # krkn-operator-acm
 
+![test](https://github.com/krkn-chaos/krkn-operator-acm/actions/workflows/test.yml/badge.svg)
+![pr-checks](https://github.com/krkn-chaos/krkn-operator-acm/actions/workflows/pr-checks.yml/badge.svg)
+![coverage](https://krkn-chaos.github.io/krkn-lib-docs/coverage_badge_krkn-operator-acm.svg)
+
 <!-- Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929) -->
 
 A Kubernetes operator that integrates Red Hat Advanced Cluster Management (ACM) with krkn-operator for chaos engineering workflows.

@@ -502,5 +502,5 @@ If you encounter issues during migration:
 
 1. Check operator logs: `kubectl logs -n <namespace> deployment/krkn-operator-acm-controller-manager`
 2. Review this guide for common issues
-3. Check [DEPLOYMENT.md](DEPLOYMENT.md) for configuration guidance
+3. Check [DEPLOYMENT.md](../DEPLOYMENT.md) for configuration guidance
 4. Report issues at https://github.com/krkn-chaos/krkn-operator-acm/issues
