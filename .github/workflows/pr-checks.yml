@@ -29,9 +29,11 @@ jobs:
 
       - name: Copy CRDs from krkn-operator dependency
         run: |
+          go mod download github.com/krkn-chaos/krkn-operator
           KRKN_OP_PATH=$(go list -m -f '{{.Dir}}' github.com/krkn-chaos/krkn-operator)
+          echo "krkn-operator module path: $KRKN_OP_PATH"
           mkdir -p config/crd/bases
-          cp -r "$KRKN_OP_PATH/config/crd/bases/"* config/crd/bases/
+          cp -v "$KRKN_OP_PATH"/config/crd/bases/*.yaml config/crd/bases/
 
       - name: Set up envtest binaries
         run: make setup-envtest
