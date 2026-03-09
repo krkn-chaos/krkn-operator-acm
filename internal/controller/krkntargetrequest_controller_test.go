@@ -711,9 +711,21 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 		})
 
 		AfterEach(func() {
-			// Cleanup request (secret should be auto-deleted via ownerReference)
+			// Cleanup request and associated secret
+			// Note: In a real cluster, the secret would be auto-deleted via ownerReference
+			// but envtest doesn't support garbage collection
 			if testRequest != nil {
 				_ = k8sClient.Delete(ctx, testRequest)
+
+				// Manually delete secret if it exists
+				secret := &corev1.Secret{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      testRequest.Spec.UUID,
+					Namespace: testNamespace,
+				}, secret)
+				if err == nil {
+					_ = k8sClient.Delete(ctx, secret)
+				}
 			}
 		})
 
@@ -771,18 +783,15 @@ var _ = Describe("KrknTargetRequest Controller", func() {
 			Expect(*ownerRef.Controller).To(BeTrue())
 			Expect(*ownerRef.BlockOwnerDeletion).To(BeTrue())
 
-			By("Deleting KrknTargetRequest")
-			err = k8sClient.Delete(ctx, testRequest)
-			Expect(err).NotTo(HaveOccurred())
+			// Note: Garbage collection of owned resources does not work in envtest
+			// (no garbage collector controller). In a real cluster, the secret would
+			// be automatically deleted when the KrknTargetRequest is deleted.
+			// We verify the ownerReference is set correctly, which is sufficient to
+			// ensure garbage collection will work in production.
 
-			By("Verifying secret is automatically deleted")
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      testRequest.Spec.UUID,
-					Namespace: testNamespace,
-				}, secret)
-				return err != nil
-			}, timeout, interval).Should(BeTrue())
+			By("Manually cleaning up the secret (garbage collection not available in envtest)")
+			err = k8sClient.Delete(ctx, secret)
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
