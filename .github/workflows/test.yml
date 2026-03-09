@@ -21,6 +21,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Copy CRDs from krkn-operator dependency
+        run: |
+          KRKN_OP_PATH=$(go list -m -f '{{.Dir}}' github.com/krkn-chaos/krkn-operator)
+          mkdir -p config/crd/bases
+          cp -r "$KRKN_OP_PATH/config/crd/bases/"* config/crd/bases/
+
       - name: Run tests with coverage
         run: |
           go mod tidy

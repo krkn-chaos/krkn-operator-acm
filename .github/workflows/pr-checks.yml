@@ -27,6 +27,12 @@ jobs:
           tar xfz staticcheck_linux_amd64.tar.gz
           ./staticcheck/staticcheck -checks all ./...
 
+      - name: Copy CRDs from krkn-operator dependency
+        run: |
+          KRKN_OP_PATH=$(go list -m -f '{{.Dir}}' github.com/krkn-chaos/krkn-operator)
+          mkdir -p config/crd/bases
+          cp -r "$KRKN_OP_PATH/config/crd/bases/"* config/crd/bases/
+
       - name: Set up envtest binaries
         run: make setup-envtest
 

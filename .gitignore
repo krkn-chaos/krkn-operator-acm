@@ -28,3 +28,6 @@ go.work
 
 bin/
 .beads/
+
+# CRDs are copied from krkn-operator dependency during tests
+config/crd/bases/*
