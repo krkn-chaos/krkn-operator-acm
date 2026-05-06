@@ -16,6 +16,17 @@ limitations under the License.
 Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 */
 
+// Package controller implements Kubernetes controllers for the krkn-operator-acm integration.
+//
+// This package provides controllers that integrate Red Hat Advanced Cluster Management (ACM)
+// with the krkn chaos engineering operator. The controllers handle:
+//
+//   - KrknOperatorTargetProviderConfig: Manages ACM-specific target provider configuration
+//   - KrknTargetRequest: Processes chaos target requests with ACM cluster discovery
+//   - ConfigMap: Syncs operator configuration from ConfigMaps
+//
+// The package enables chaos scenarios to be executed across ACM-managed clusters by
+// discovering and providing cluster credentials to the core krkn-operator.
 package controller
 
 const (

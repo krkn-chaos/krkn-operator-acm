@@ -14,6 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package utils provides test utilities for e2e and integration tests.
+//
+// This package contains helper functions for managing test dependencies and
+// test environment setup, including:
+//
+//   - Installing and uninstalling Prometheus Operator
+//   - Installing and uninstalling Cert Manager
+//   - Loading Docker images to kind clusters
+//   - Running shell commands with proper output handling
+//
+// These utilities are shared across the test suite to ensure consistent
+// test environment configuration.
 package utils
 
 import (
@@ -24,7 +36,7 @@ import (
 	"os/exec"
 	"strings"
 
-	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
+	ginkgo "github.com/onsi/ginkgo/v2"
 )
 
 const (
@@ -37,7 +49,7 @@ const (
 )
 
 func warnError(err error) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "warning: %v\n", err)
 }
 
 // Run executes the provided command within this context
@@ -46,16 +58,16 @@ func Run(cmd *exec.Cmd) (string, error) {
 	cmd.Dir = dir
 
 	if err := os.Chdir(cmd.Dir); err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "chdir dir: %q\n", err)
 	}
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
-	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
+	_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Print full output to GinkgoWriter for debugging
-		_, _ = fmt.Fprintf(GinkgoWriter, "command failed with output:\n%s\n", string(output))
+		// Print full output to ginkgo.GinkgoWriter for debugging
+		_, _ = fmt.Fprintf(ginkgo.GinkgoWriter, "command failed with output:\n%s\n", string(output))
 		return string(output), fmt.Errorf("%q failed: %w", command, err)
 	}
 
@@ -65,6 +77,7 @@ func Run(cmd *exec.Cmd) (string, error) {
 // InstallPrometheusOperator installs the prometheus Operator to be used to export the enabled metrics.
 func InstallPrometheusOperator() error {
 	url := fmt.Sprintf(prometheusOperatorURL, prometheusOperatorVersion)
+	// #nosec G204 -- URL is constructed from const values, not user input
 	cmd := exec.Command("kubectl", "create", "-f", url)
 	_, err := Run(cmd)
 	return err
@@ -73,6 +86,7 @@ func InstallPrometheusOperator() error {
 // UninstallPrometheusOperator uninstalls the prometheus
 func UninstallPrometheusOperator() {
 	url := fmt.Sprintf(prometheusOperatorURL, prometheusOperatorVersion)
+	// #nosec G204 -- URL is constructed from const values, not user input
 	cmd := exec.Command("kubectl", "delete", "-f", url)
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
@@ -109,6 +123,7 @@ func IsPrometheusCRDsInstalled() bool {
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
+	// #nosec G204 -- URL is constructed from const values, not user input
 	cmd := exec.Command("kubectl", "delete", "-f", url)
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
@@ -118,6 +133,7 @@ func UninstallCertManager() {
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
+	// #nosec G204 -- URL is constructed from const values, not user input
 	cmd := exec.Command("kubectl", "apply", "-f", url)
 	if _, err := Run(cmd); err != nil {
 		return err
@@ -174,6 +190,7 @@ func LoadImageToKindClusterWithName(name string) error {
 		cluster = v
 	}
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
+	// #nosec G204 -- Command args are controlled: name is docker image tag, cluster is from env or const
 	cmd := exec.Command("kind", kindOptions...)
 	_, err := Run(cmd)
 	return err
@@ -206,8 +223,7 @@ func GetProjectDir() (string, error) {
 // UncommentCode searches for target in the file and remove the comment prefix
 // of the target content. The target content may span multiple lines.
 func UncommentCode(filename, target, prefix string) error {
-	// false positive
-	// nolint:gosec
+	// #nosec G304 -- Test utility function, filename is controlled by test code
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to read file %q: %w", filename, err)
@@ -246,9 +262,8 @@ func UncommentCode(filename, target, prefix string) error {
 		return fmt.Errorf("failed to write to output: %w", err)
 	}
 
-	// false positive
-	// nolint:gosec
-	if err = os.WriteFile(filename, out.Bytes(), 0644); err != nil {
+	// #nosec G306 -- Test utility function, file is created with secure permissions
+	if err = os.WriteFile(filename, out.Bytes(), 0600); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", filename, err)
 	}
 
