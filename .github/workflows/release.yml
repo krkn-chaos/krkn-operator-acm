@@ -116,29 +116,29 @@ jobs:
           echo "Verifying multi-arch manifest..."
           docker buildx imagetools inspect quay.io/krkn-chaos/krkn-operator-acm:$VERSION
 
+      - name: Generate Release Notes
+        id: generate
+        continue-on-error: true
+        run: |
+          python3 scripts/generate-release-notes.py \
+            --version $VERSION \
+            --repo-url https://github.com/krkn-operator-ecosystem/krkn-operator-acm \
+            --docs-url https://krkn-chaos.dev/docs/krkn-operator/ \
+            > release-notes.md
+
+      - name: Fallback Release Notes
+        if: steps.generate.outcome == 'failure'
+        run: |
+          echo "## Release $VERSION" > release-notes.md
+          echo "" >> release-notes.md
+          echo "See commit history for changes." >> release-notes.md
+          echo "" >> release-notes.md
+          echo "---" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "**Documentation**: https://krkn-chaos.dev/docs/krkn-operator/" >> release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat <<EOF > release-notes.md
-          ## Container Image
-
-          Multi-architecture image (linux/amd64, linux/arm64):
-
-          - \`quay.io/krkn-chaos/krkn-operator-acm:$VERSION\`
-          - \`quay.io/krkn-chaos/krkn-operator-acm:latest\`
-
-          ## Installation
-
-          \`\`\`bash
-          # Using Helm (recommended)
-          helm install krkn-operator oci://quay.io/krkn-chaos/charts/krkn-operator \\
-            --set acm.enabled=true \\
-            --version $VERSION
-
-          # Using kubectl
-          make deploy IMG=quay.io/krkn-chaos/krkn-operator-acm:$VERSION
-          \`\`\`
-          EOF
-
           gh release create $VERSION --title "Release $VERSION" --notes-file release-notes.md
