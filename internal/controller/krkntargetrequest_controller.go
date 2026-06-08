@@ -197,7 +197,11 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		secretName := r.getConfiguredSecretName(ctx, clusterName)
 		secret, err := r.getClusterSecret(ctx, clusterName, secretName)
 		if err != nil {
-			logger.Error(err, "failed to get cluster secret", "cluster", clusterName, "secret", secretName)
+			if errors.IsNotFound(err) {
+				logger.Info("cluster secret not found, skipping cluster", "cluster", clusterName, "secret", secretName)
+			} else {
+				logger.Error(err, "failed to get cluster secret", "cluster", clusterName, "secret", secretName)
+			}
 			continue
 		}
 

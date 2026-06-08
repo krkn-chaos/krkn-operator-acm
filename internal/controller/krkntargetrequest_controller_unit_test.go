@@ -22,6 +22,9 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -105,6 +108,87 @@ func TestGetConfiguredSecretName(t *testing.T) {
 
 			// Cleanup
 			store.Delete(varName)
+		})
+	}
+}
+
+func TestGetClusterSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = krknv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name           string
+		clusterName    string
+		secretName     string
+		createSecret   bool
+		expectError    bool
+		expectNotFound bool
+	}{
+		{
+			name:           "Secret exists",
+			clusterName:    "test-cluster",
+			secretName:     "test-secret",
+			createSecret:   true,
+			expectError:    false,
+			expectNotFound: false,
+		},
+		{
+			name:           "Secret not found",
+			clusterName:    "test-cluster",
+			secretName:     "missing-secret",
+			createSecret:   false,
+			expectError:    true,
+			expectNotFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake client
+			clientBuilder := fake.NewClientBuilder().WithScheme(scheme)
+
+			if tt.createSecret {
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      tt.secretName,
+						Namespace: tt.clusterName,
+					},
+					Data: map[string][]byte{
+						"token": []byte("test-token"),
+					},
+				}
+				clientBuilder = clientBuilder.WithObjects(secret)
+			}
+
+			reconciler := &KrknTargetRequestReconciler{
+				Client: clientBuilder.Build(),
+				Scheme: scheme,
+			}
+
+			// Test
+			secret, err := reconciler.getClusterSecret(ctx, tt.clusterName, tt.secretName)
+
+			// Verify
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				if tt.expectNotFound {
+					if !errors.IsNotFound(err) {
+						t.Errorf("expected NotFound error, got: %v", err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if secret == nil {
+					t.Errorf("expected secret, got nil")
+				}
+			}
 		})
 	}
 }
