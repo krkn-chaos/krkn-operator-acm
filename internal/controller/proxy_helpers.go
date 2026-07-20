@@ -168,39 +168,73 @@ func (r *KrknTargetRequestReconciler) findProxyService(ctx context.Context, name
 	return service.Name, service.Namespace, port, nil
 }
 
-// getProxyCA retrieves the CA certificate from the cluster-proxy CA ConfigMap
+// getProxyCA retrieves the CA certificate from the cluster-proxy CA Secret
+// Tries primary Secret (multicluster-engine/proxy-server-ca) first, then falls back
+// to secondary Secret (open-cluster-management-agent-addon/cluster-proxy-ca)
 // Returns: base64-encoded CA certificate, error
 func (r *KrknTargetRequestReconciler) getProxyCA(ctx context.Context) (string, error) {
 	logger := log.FromContext(ctx)
 
-	configMap := &corev1.ConfigMap{}
+	// Check for custom namespace via environment variable
+	proxyCANamespace := os.Getenv("ACM_PROXY_CA_NAMESPACE")
+	if proxyCANamespace == "" {
+		proxyCANamespace = ProxyCASecretNamespace
+	}
+
+	// Try primary Secret first
+	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      ProxyCAConfigMapName,
-		Namespace: r.OperatorNamespace,
-	}, configMap)
+		Name:      ProxyCASecretName,
+		Namespace: proxyCANamespace,
+	}, secret)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get proxy CA ConfigMap %s in namespace %s: %w",
-			ProxyCAConfigMapName, r.OperatorNamespace, err)
-	}
+		if errors.IsNotFound(err) {
+			// Fallback to secondary Secret
+			logger.V(1).Info("primary proxy CA Secret not found, trying fallback",
+				"primary-secret", ProxyCASecretName,
+				"primary-namespace", proxyCANamespace,
+				"fallback-secret", ProxyCAFallbackSecretName,
+				"fallback-namespace", ProxyCAFallbackNamespace)
 
-	// The CA bundle is typically in the "service-ca.crt" key
-	caData, ok := configMap.Data["service-ca.crt"]
-	if !ok {
-		// Fallback to ca.crt or ca-bundle.crt
-		if caData, ok = configMap.Data["ca.crt"]; !ok {
-			if caData, ok = configMap.Data["ca-bundle.crt"]; !ok {
-				return "", fmt.Errorf("CA data not found in ConfigMap %s (checked service-ca.crt, ca.crt, ca-bundle.crt)",
-					ProxyCAConfigMapName)
+			err = r.Get(ctx, types.NamespacedName{
+				Name:      ProxyCAFallbackSecretName,
+				Namespace: ProxyCAFallbackNamespace,
+			}, secret)
+
+			if err != nil {
+				return "", fmt.Errorf("failed to get proxy CA Secret from both %s/%s and %s/%s: %w",
+					proxyCANamespace, ProxyCASecretName,
+					ProxyCAFallbackNamespace, ProxyCAFallbackSecretName, err)
 			}
+
+			logger.Info("using fallback proxy CA Secret",
+				"secret", ProxyCAFallbackSecretName,
+				"namespace", ProxyCAFallbackNamespace)
+		} else {
+			return "", fmt.Errorf("failed to get proxy CA Secret %s in namespace %s: %w",
+				ProxyCASecretName, proxyCANamespace, err)
 		}
+	} else {
+		logger.Info("using primary proxy CA Secret",
+			"secret", ProxyCASecretName,
+			"namespace", proxyCANamespace)
 	}
 
-	// Base64 encode the CA data
-	caBase64 := base64.StdEncoding.EncodeToString([]byte(caData))
+	// Extract CA data from Secret
+	caData, ok := secret.Data[ProxyCASecretKey]
+	if !ok {
+		return "", fmt.Errorf("CA data not found in Secret %s/%s (expected key: %s)",
+			secret.Namespace, secret.Name, ProxyCASecretKey)
+	}
 
-	logger.Info("retrieved proxy CA certificate",
-		"configmap", ProxyCAConfigMapName,
+	// Secret data is already base64 encoded (kubernetes.io/tls secrets store binary data)
+	// We need to base64 encode it again for kubeconfig
+	caBase64 := base64.StdEncoding.EncodeToString(caData)
+
+	logger.Info("retrieved proxy CA certificate from Secret",
+		"secret", secret.Name,
+		"namespace", secret.Namespace,
 		"ca-length", len(caData))
 
 	return caBase64, nil

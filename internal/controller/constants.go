@@ -79,4 +79,19 @@ const (
 
 	// ProxyServiceLabelValue is the value of the component label for proxy services
 	ProxyServiceLabelValue = "cluster-proxy-addon-user"
+
+	// ProxyCASecretName is the name of the Secret containing proxy CA certificate
+	ProxyCASecretName = "proxy-server-ca"
+
+	// ProxyCASecretNamespace is the default namespace for proxy CA Secret
+	ProxyCASecretNamespace = "multicluster-engine"
+
+	// ProxyCAFallbackSecretName is the fallback Secret name for proxy CA
+	ProxyCAFallbackSecretName = "cluster-proxy-ca"
+
+	// ProxyCAFallbackNamespace is the fallback namespace for proxy CA Secret
+	ProxyCAFallbackNamespace = "open-cluster-management-agent-addon"
+
+	// ProxyCASecretKey is the key in the Secret containing the CA certificate
+	ProxyCASecretKey = "ca.crt"
 )
