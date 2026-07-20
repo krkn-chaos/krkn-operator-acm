@@ -317,17 +317,22 @@ var _ = Describe("Proxy Configuration", func() {
 	})
 
 	Describe("getProxyCA", func() {
-		It("should extract CA from service-ca.crt key", func() {
-			configMap := &corev1.ConfigMap{
+		AfterEach(func() {
+			// Clean up env var after each test
+			os.Unsetenv("ACM_PROXY_CA_NAMESPACE")
+		})
+
+		It("should read CA from primary Secret (multicluster-engine/proxy-server-ca)", func() {
+			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCAConfigMapName,
-					Namespace: "krkn-operator-system",
+					Name:      ProxyCASecretName,
+					Namespace: ProxyCASecretNamespace,
 				},
-				Data: map[string]string{
-					"service-ca.crt": "-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----",
+				Data: map[string][]byte{
+					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----"),
 				},
 			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			ca, err := reconciler.getProxyCA(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -336,61 +341,64 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(ca).To(MatchRegexp("^[A-Za-z0-9+/=]+$"))
 		})
 
-		It("should fallback to ca.crt key", func() {
-			configMap := &corev1.ConfigMap{
+		It("should fallback to secondary Secret when primary not found", func() {
+			// Don't create primary Secret, only fallback
+			fallbackSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCAConfigMapName,
-					Namespace: "krkn-operator-system",
+					Name:      ProxyCAFallbackSecretName,
+					Namespace: ProxyCAFallbackNamespace,
 				},
-				Data: map[string]string{
-					"ca.crt": "-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----",
+				Data: map[string][]byte{
+					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nFALLBACK_CA_DATA\n-----END CERTIFICATE-----"),
 				},
 			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(k8sClient.Create(ctx, fallbackSecret)).To(Succeed())
 
 			ca, err := reconciler.getProxyCA(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(ca).ToNot(BeEmpty())
 		})
 
-		It("should fallback to ca-bundle.crt key", func() {
-			configMap := &corev1.ConfigMap{
+		It("should respect ACM_PROXY_CA_NAMESPACE environment variable", func() {
+			os.Setenv("ACM_PROXY_CA_NAMESPACE", "custom-namespace")
+
+			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCAConfigMapName,
-					Namespace: "krkn-operator-system",
+					Name:      ProxyCASecretName,
+					Namespace: "custom-namespace",
 				},
-				Data: map[string]string{
-					"ca-bundle.crt": "-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----",
+				Data: map[string][]byte{
+					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nCUSTOM_CA_DATA\n-----END CERTIFICATE-----"),
 				},
 			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			ca, err := reconciler.getProxyCA(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(ca).ToNot(BeEmpty())
 		})
 
-		It("should return error when ConfigMap not found", func() {
+		It("should return error when Secret not found in both namespaces", func() {
 			_, err := reconciler.getProxyCA(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to get proxy CA ConfigMap"))
+			Expect(err.Error()).To(ContainSubstring("failed to get proxy CA Secret from both"))
 		})
 
-		It("should return error when CA data not found in ConfigMap", func() {
-			configMap := &corev1.ConfigMap{
+		It("should return error when ca.crt key missing from Secret", func() {
+			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCAConfigMapName,
-					Namespace: "krkn-operator-system",
+					Name:      ProxyCASecretName,
+					Namespace: ProxyCASecretNamespace,
 				},
-				Data: map[string]string{
-					"other-key": "some-data",
+				Data: map[string][]byte{
+					"other-key": []byte("some-data"),
 				},
 			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			_, err := reconciler.getProxyCA(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("CA data not found in ConfigMap"))
+			Expect(err.Error()).To(ContainSubstring("CA data not found in Secret"))
 		})
 	})
 
