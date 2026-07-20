@@ -168,56 +168,53 @@ func (r *KrknTargetRequestReconciler) findProxyService(ctx context.Context, name
 	return service.Name, service.Namespace, port, nil
 }
 
-// getProxyCA retrieves the CA certificate from the cluster-proxy CA Secret
-// Single source of truth: reads from one Secret only (no fallback)
-// Default: multicluster-engine/proxy-server-ca
-// Overrideable via ACM_PROXY_CA_NAMESPACE and ACM_PROXY_CA_SECRET_NAME env vars
+// getProxyCA retrieves the CA certificate for the cluster proxy service
+// The proxy service uses OpenShift service-serving-signer certificates,
+// so we need the service CA, not the cluster-proxy CA.
+// Reads from ConfigMap: openshift-service-ca.crt (created by OpenShift service CA operator)
 // Returns: base64-encoded CA certificate, error
 func (r *KrknTargetRequestReconciler) getProxyCA(ctx context.Context) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Get Secret name from environment or use default
-	secretName := os.Getenv(ProxyCASecretNameEnvVar)
-	if secretName == "" {
-		secretName = ProxyCASecretName
-	}
+	// The proxy service certificate is signed by OpenShift service-serving-signer
+	// This CA is injected into ConfigMaps with annotation:
+	// service.beta.openshift.io/inject-cabundle: "true"
 
-	// Get namespace from environment or use default
-	secretNamespace := os.Getenv(ProxyCANamespaceEnvVar)
-	if secretNamespace == "" {
-		secretNamespace = ProxyCASecretNamespace
-	}
+	// We read from the same ConfigMap that OpenShift creates for service CA
+	// in the proxy namespace
+	configMapName := "openshift-service-ca.crt"
+	configMapNamespace := "multicluster-engine" // Same namespace as proxy service
 
-	// Read Secret (single source of truth - no fallback)
-	secret := &corev1.Secret{}
+	// Read ConfigMap
+	configMap := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      secretName,
-		Namespace: secretNamespace,
-	}, secret)
+		Name:      configMapName,
+		Namespace: configMapNamespace,
+	}, configMap)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to get proxy CA Secret %s/%s: %w (verify OCM cluster-proxy-addon is installed)",
-			secretNamespace, secretName, err)
+		return "", fmt.Errorf("failed to get service CA ConfigMap %s/%s: %w (verify OpenShift cluster)",
+			configMapNamespace, configMapName, err)
 	}
 
-	logger.Info("using proxy CA Secret",
-		"secret", secretName,
-		"namespace", secretNamespace)
+	logger.Info("using service CA ConfigMap",
+		"configmap", configMapName,
+		"namespace", configMapNamespace)
 
-	// Extract CA data from Secret
-	caData, ok := secret.Data[ProxyCASecretKey]
+	// Extract CA data from ConfigMap
+	// OpenShift service CA operator injects the CA into "service-ca.crt" key
+	caData, ok := configMap.Data["service-ca.crt"]
 	if !ok {
-		return "", fmt.Errorf("CA data not found in Secret %s/%s (expected key: %s)",
-			secretNamespace, secretName, ProxyCASecretKey)
+		return "", fmt.Errorf("service-ca.crt key not found in ConfigMap %s/%s",
+			configMapNamespace, configMapName)
 	}
 
-	// Secret data is already base64 encoded (kubernetes.io/tls secrets store binary data)
-	// We need to base64 encode it again for kubeconfig
-	caBase64 := base64.StdEncoding.EncodeToString(caData)
+	// ConfigMap data is plain text (PEM format), need to base64 encode for kubeconfig
+	caBase64 := base64.StdEncoding.EncodeToString([]byte(caData))
 
-	logger.Info("retrieved proxy CA certificate from Secret",
-		"secret", secretName,
-		"namespace", secretNamespace,
+	logger.Info("retrieved service CA certificate from ConfigMap",
+		"configmap", configMapName,
+		"namespace", configMapNamespace,
 		"ca-length", len(caData))
 
 	return caBase64, nil
