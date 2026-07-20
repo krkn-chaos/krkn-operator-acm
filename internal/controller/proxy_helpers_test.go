@@ -506,27 +506,47 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(config.Enabled).To(BeFalse())
 		})
 
-		It("should create ManifestWork and return disabled config when proxy enabled but ManifestWork missing", func() {
+		It("should return error when proxy enabled but ManagedProxyConfiguration missing", func() {
 			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "true")
 
-			config, err := reconciler.getProxyConfig(ctx, "test-cluster")
-			Expect(err).ToNot(HaveOccurred())
-			Expect(config).ToNot(BeNil())
-			// When ManifestWork is just created, it returns disabled config temporarily
-			Expect(config.Enabled).To(BeFalse())
-
-			// Verify ManifestWork was created
-			manifestWork := &unstructured.Unstructured{}
+			// Create ManifestWork with Applied status (simulating OCM processed it)
+			manifestWork := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "work.open-cluster-management.io/v1",
+					"kind":       "ManifestWork",
+					"metadata": map[string]interface{}{
+						"name":      ManifestWorkName,
+						"namespace": "test-cluster",
+					},
+					"status": map[string]interface{}{
+						"conditions": []interface{}{
+							map[string]interface{}{
+								"type":   "Applied",
+								"status": "True",
+							},
+							map[string]interface{}{
+								"type":   "Available",
+								"status": "True",
+							},
+						},
+					},
+				},
+			}
 			manifestWork.SetGroupVersionKind(schema.GroupVersionKind{
 				Group:   "work.open-cluster-management.io",
 				Version: "v1",
 				Kind:    "ManifestWork",
 			})
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ManifestWorkName,
-				Namespace: "test-cluster",
-			}, manifestWork)
-			Expect(err).ToNot(HaveOccurred())
+			Expect(k8sClient.Create(ctx, manifestWork)).To(Succeed())
+
+			// Now getProxyConfig should fail because ManagedProxyConfiguration doesn't exist
+			config, err := reconciler.getProxyConfig(ctx, "test-cluster")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+			// Should fail fast with clear error message
+			Expect(err.Error()).To(ContainSubstring("proxy mode enabled but"))
+			// Error message should suggest either fixing or disabling proxy mode
+			Expect(err.Error()).To(ContainSubstring("ACM_USE_PROXY_TEST_CLUSTER=false"))
 		})
 	})
 })
