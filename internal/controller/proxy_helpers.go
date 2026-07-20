@@ -309,13 +309,63 @@ func (r *KrknTargetRequestReconciler) ensureManifestWork(ctx context.Context, cl
 	return nil
 }
 
+// getServiceAccountName retrieves the service account name the operator is running as
+// Returns the service account name or falls back to default
+func (r *KrknTargetRequestReconciler) getServiceAccountName(ctx context.Context) string {
+	logger := log.FromContext(ctx)
+
+	// Try to read from environment first (some deployment tools set this)
+	if saName := os.Getenv("SERVICE_ACCOUNT_NAME"); saName != "" {
+		logger.V(1).Info("using service account from environment", "service-account", saName)
+		return saName
+	}
+
+	// Fallback to default (standard for krkn-operator-acm)
+	logger.V(1).Info("using default service account name", "service-account", DefaultServiceAccountName)
+	return DefaultServiceAccountName
+}
+
 // createManifestWork creates a ManifestWork for proxy RBAC in the cluster namespace
 func (r *KrknTargetRequestReconciler) createManifestWork(ctx context.Context, clusterName string) error {
 	logger := log.FromContext(ctx)
 
+	// Get operator service account name
+	serviceAccountName := r.getServiceAccountName(ctx)
+
+	// Construct the proxy user name: cluster:hub:system:serviceaccount:<namespace>:<sa-name>
+	proxyUserName := fmt.Sprintf("cluster:hub:system:serviceaccount:%s:%s",
+		r.OperatorNamespace, serviceAccountName)
+
+	// Build ManifestWork template with dynamic service account
+	manifestWorkTemplate := fmt.Sprintf(`apiVersion: work.open-cluster-management.io/v1
+kind: ManifestWork
+metadata:
+  name: %s
+  labels:
+    app.kubernetes.io/name: krkn
+    app.kubernetes.io/component: service-proxy-rbac
+spec:
+  workload:
+    manifests:
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: krkn-service-proxy-access
+          labels:
+            app.kubernetes.io/name: krkn
+            app.kubernetes.io/component: service-proxy-rbac
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-admin
+        subjects:
+          - apiGroup: rbac.authorization.k8s.io
+            kind: User
+            name: %s`, ManifestWorkName, proxyUserName)
+
 	// Parse the ManifestWork template
 	manifestWork := &unstructured.Unstructured{}
-	err := yaml.Unmarshal([]byte(ManifestWorkTemplate), &manifestWork.Object)
+	err := yaml.Unmarshal([]byte(manifestWorkTemplate), &manifestWork.Object)
 	if err != nil {
 		return fmt.Errorf("failed to parse ManifestWork template: %w", err)
 	}
@@ -342,7 +392,8 @@ func (r *KrknTargetRequestReconciler) createManifestWork(ctx context.Context, cl
 
 	logger.Info("created ManifestWork for proxy RBAC",
 		"cluster", clusterName,
-		"manifestwork", ManifestWorkName)
+		"manifestwork", ManifestWorkName,
+		"proxy-user", proxyUserName)
 
 	return nil
 }

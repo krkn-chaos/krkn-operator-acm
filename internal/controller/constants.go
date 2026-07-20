@@ -68,36 +68,15 @@ const (
 	// This token is used for proxy connections instead of managed cluster tokens
 	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
+	// ServiceAccountNamespacePath is the path to the file containing the operator's namespace
+	ServiceAccountNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+	// DefaultServiceAccountName is the default service account name if not detected
+	DefaultServiceAccountName = "controller-manager"
+
 	// ProxyServiceLabel is the label selector for finding the cluster proxy service
 	ProxyServiceLabel = "component"
 
 	// ProxyServiceLabelValue is the value of the component label for proxy services
 	ProxyServiceLabelValue = "cluster-proxy-addon-user"
-
-	// ManifestWorkTemplate is the YAML template for the proxy RBAC ManifestWork
-	ManifestWorkTemplate = `apiVersion: work.open-cluster-management.io/v1
-kind: ManifestWork
-metadata:
-  name: krkn-service-proxy-rbac
-  labels:
-    app.kubernetes.io/name: krkn
-    app.kubernetes.io/component: service-proxy-rbac
-spec:
-  workload:
-    manifests:
-      - apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRoleBinding
-        metadata:
-          name: krkn-service-proxy-access
-          labels:
-            app.kubernetes.io/name: krkn
-            app.kubernetes.io/component: service-proxy-rbac
-        roleRef:
-          apiGroup: rbac.authorization.k8s.io
-          kind: ClusterRole
-          name: cluster-admin
-        subjects:
-          - apiGroup: rbac.authorization.k8s.io
-            kind: User
-            name: cluster:hub:system:serviceaccount:default:default`
 )
