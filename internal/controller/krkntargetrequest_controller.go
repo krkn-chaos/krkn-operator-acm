@@ -84,6 +84,9 @@ type KrknTargetRequestReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=proxy.open-cluster-management.io,resources=managedproxyconfigurations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=work.open-cluster-management.io,resources=manifestworks,verbs=create;get;list;patch;update;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -193,27 +196,48 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		clusterURL := cluster.Spec.ManagedClusterClientConfigs[0].URL
 		clusterCABundle := cluster.Spec.ManagedClusterClientConfigs[0].CABundle
 
-		// Get the configured secret from configstore, or use default
-		secretName := r.getConfiguredSecretName(ctx, clusterName)
-		secret, err := r.getClusterSecret(ctx, clusterName, secretName)
+		// Get proxy configuration for this cluster
+		proxyConfig, err := r.getProxyConfig(ctx, clusterName)
 		if err != nil {
-			if errors.IsNotFound(err) {
-				logger.Info("cluster secret not found, skipping cluster", "cluster", clusterName, "secret", secretName)
-			} else {
-				logger.Error(err, "failed to get cluster secret", "cluster", clusterName, "secret", secretName)
+			logger.Error(err, "failed to get proxy configuration, skipping cluster",
+				"cluster", clusterName)
+			continue
+		}
+
+		// Get token based on proxy mode
+		var token string
+		if proxyConfig.Enabled {
+			token = proxyConfig.ProxyToken
+			logger.Info("using proxy mode for cluster",
+				"cluster", clusterName,
+				"proxy-url", proxyConfig.ProxyURL)
+		} else {
+			// Get the configured secret from configstore, or use default
+			secretName := r.getConfiguredSecretName(ctx, clusterName)
+			secret, err := r.getClusterSecret(ctx, clusterName, secretName)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					logger.Info("cluster secret not found, skipping cluster",
+						"cluster", clusterName, "secret", secretName)
+				} else {
+					logger.Error(err, "failed to get cluster secret",
+						"cluster", clusterName, "secret", secretName)
+				}
+				continue
 			}
-			continue
+
+			// Extract token from secret
+			tokenBytes, ok := secret.Data["token"]
+			if !ok {
+				logger.Error(fmt.Errorf("token not found in secret"), "missing token",
+					"cluster", clusterName)
+				continue
+			}
+			token = string(tokenBytes)
 		}
 
-		// Extract token from secret
-		token, ok := secret.Data["token"]
-		if !ok {
-			logger.Error(fmt.Errorf("token not found in secret"), "missing token", "cluster", clusterName)
-			continue
-		}
-
-		// Generate kubeconfig
-		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, string(token))
+		// Generate kubeconfig with proxy config
+		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, token, proxyConfig)
 		if err != nil {
 			logger.Error(err, "failed to generate kubeconfig", "cluster", clusterName)
 			continue
@@ -222,15 +246,21 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Encode kubeconfig as base64
 		kubeconfigBase64 := base64.StdEncoding.EncodeToString([]byte(kubeconfig))
 
+		// Use actual URL (proxy or direct) for ClusterAPIURL
+		actualURL := clusterURL
+		if proxyConfig.Enabled {
+			actualURL = proxyConfig.ProxyURL
+		}
+
 		clustersData[clusterName] = ClusterData{
 			ClusterName: clusterName,
-			ClusterAPI:  clusterURL,
+			ClusterAPI:  actualURL,
 			Kubeconfig:  kubeconfigBase64,
 		}
 
 		targetData = append(targetData, krknv1alpha1.ClusterTarget{
 			ClusterName:   clusterName,
-			ClusterAPIURL: clusterURL,
+			ClusterAPIURL: actualURL,
 		})
 	}
 
@@ -383,8 +413,22 @@ func (r *KrknTargetRequestReconciler) getClusterSecret(ctx context.Context, clus
 }
 
 // generateKubeconfig generates a kubeconfig for a managed cluster
-func (r *KrknTargetRequestReconciler) generateKubeconfig(clusterName, clusterURL, clusterCABundle, token string) (string, error) {
-	// Use the CA bundle from the managed cluster spec
+// When proxyConfig is provided and enabled, uses proxy settings instead of direct connection
+func (r *KrknTargetRequestReconciler) generateKubeconfig(
+	clusterName, clusterURL, clusterCABundle, token string,
+	proxyConfig *ProxyConfig,
+) (string, error) {
+	// Determine actual URL, CA, and token based on proxy config
+	actualURL := clusterURL
+	actualCA := clusterCABundle
+	actualToken := token
+
+	if proxyConfig != nil && proxyConfig.Enabled {
+		actualURL = proxyConfig.ProxyURL
+		actualCA = proxyConfig.ProxyCA
+		actualToken = proxyConfig.ProxyToken
+	}
+
 	kubeconfig := fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -402,7 +446,7 @@ users:
 - name: %s
   user:
     token: %s
-`, clusterCABundle, clusterURL, clusterName, clusterName, clusterName, clusterName, clusterName, clusterName, token)
+`, actualCA, actualURL, clusterName, clusterName, clusterName, clusterName, clusterName, clusterName, actualToken)
 
 	return kubeconfig, nil
 }

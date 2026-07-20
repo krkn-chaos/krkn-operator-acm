@@ -303,6 +303,39 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		logger.Info("added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
 	}
 
+	// Add proxy mode toggle for each cluster
+	for _, cluster := range managedClusters.Items {
+		clusterName := cluster.Metadata.Name
+
+		// Create proxy mode toggle field
+		proxyVarName := formatProxyVarName(clusterName)
+		proxyShortDesc := fmt.Sprintf("Proxy mode for %s", clusterName)
+		proxyDescription := fmt.Sprintf("Enable cluster proxy connection for %s instead of direct API access. "+
+			"Requires cluster-proxy-addon and ManifestWork '%s' to be deployed.",
+			clusterName, ManifestWorkName)
+		proxyDefaultValue := "false"
+		proxySeparator := ","
+		proxyAllowedValues := "true,false"
+
+		proxyField := typing.InputField{
+			Name:             &proxyVarName,
+			ShortDescription: &proxyShortDesc,
+			Description:      &proxyDescription,
+			Variable:         &proxyVarName,
+			Type:             typing.Enum,
+			Default:          &proxyDefaultValue,
+			Separator:        &proxySeparator,
+			AllowedValues:    &proxyAllowedValues,
+			Required:         false,
+			Secret:           false,
+		}
+
+		fields = append(fields, proxyField)
+		logger.Info("added proxy config field for cluster",
+			"cluster", clusterName,
+			"variable", proxyVarName)
+	}
+
 	// Serialize fields to JSON using InputField.MarshalJSON
 	// which preserves the format expected by the parser
 	var jsonFields []json.RawMessage
