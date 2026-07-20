@@ -472,21 +472,39 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 	// Get proxy URL
 	proxyURL, err := r.getProxyURL(ctx, clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get proxy URL for cluster %s: %w", clusterName, err)
+		// If ManagedProxyConfiguration or Service doesn't exist, OCM proxy not available
+		// Fall back to direct connection gracefully
+		logger.Info("proxy URL not available, falling back to direct connection",
+			"cluster", clusterName,
+			"reason", "missing-proxy-resources",
+			"hint", "install OCM cluster-proxy-addon or disable proxy mode for this cluster")
+		return &ProxyConfig{Enabled: false}, nil
 	}
 	config.ProxyURL = proxyURL
 
 	// Get proxy CA
 	proxyCA, err := r.getProxyCA(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get proxy CA for cluster %s: %w", clusterName, err)
+		// If CA Secret doesn't exist, likely OCM cluster-proxy-addon not installed
+		// Fall back to direct connection gracefully
+		logger.Info("proxy CA not available, falling back to direct connection",
+			"cluster", clusterName,
+			"reason", "missing-ca-secret",
+			"hint", "install OCM cluster-proxy-addon or disable proxy mode for this cluster")
+		return &ProxyConfig{Enabled: false}, nil
 	}
 	config.ProxyCA = proxyCA
 
 	// Get operator token
 	token, err := r.getOperatorToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get operator token for cluster %s: %w", clusterName, err)
+		// If token file doesn't exist, likely running outside Kubernetes (dev environment)
+		// Fall back to direct connection gracefully
+		logger.Info("operator token not available, falling back to direct connection",
+			"cluster", clusterName,
+			"reason", "not-running-in-pod",
+			"hint", "proxy mode requires running in Kubernetes pod with service account token mounted")
+		return &ProxyConfig{Enabled: false}, nil
 	}
 	config.ProxyToken = token
 
