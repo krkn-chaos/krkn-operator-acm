@@ -169,63 +169,46 @@ func (r *KrknTargetRequestReconciler) findProxyService(ctx context.Context, name
 }
 
 // getProxyCA retrieves the CA certificate from the cluster-proxy CA Secret
-// Tries primary Secret (multicluster-engine/proxy-server-ca) first, then falls back
-// to secondary Secret (open-cluster-management-agent-addon/cluster-proxy-ca)
+// Single source of truth: reads from one Secret only (no fallback)
+// Default: multicluster-engine/proxy-server-ca
+// Overrideable via ACM_PROXY_CA_NAMESPACE and ACM_PROXY_CA_SECRET_NAME env vars
 // Returns: base64-encoded CA certificate, error
 func (r *KrknTargetRequestReconciler) getProxyCA(ctx context.Context) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Check for custom namespace via environment variable
-	proxyCANamespace := os.Getenv("ACM_PROXY_CA_NAMESPACE")
-	if proxyCANamespace == "" {
-		proxyCANamespace = ProxyCASecretNamespace
+	// Get Secret name from environment or use default
+	secretName := os.Getenv(ProxyCASecretNameEnvVar)
+	if secretName == "" {
+		secretName = ProxyCASecretName
 	}
 
-	// Try primary Secret first
+	// Get namespace from environment or use default
+	secretNamespace := os.Getenv(ProxyCANamespaceEnvVar)
+	if secretNamespace == "" {
+		secretNamespace = ProxyCASecretNamespace
+	}
+
+	// Read Secret (single source of truth - no fallback)
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      ProxyCASecretName,
-		Namespace: proxyCANamespace,
+		Name:      secretName,
+		Namespace: secretNamespace,
 	}, secret)
 
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Fallback to secondary Secret
-			logger.V(1).Info("primary proxy CA Secret not found, trying fallback",
-				"primary-secret", ProxyCASecretName,
-				"primary-namespace", proxyCANamespace,
-				"fallback-secret", ProxyCAFallbackSecretName,
-				"fallback-namespace", ProxyCAFallbackNamespace)
-
-			err = r.Get(ctx, types.NamespacedName{
-				Name:      ProxyCAFallbackSecretName,
-				Namespace: ProxyCAFallbackNamespace,
-			}, secret)
-
-			if err != nil {
-				return "", fmt.Errorf("failed to get proxy CA Secret from both %s/%s and %s/%s: %w",
-					proxyCANamespace, ProxyCASecretName,
-					ProxyCAFallbackNamespace, ProxyCAFallbackSecretName, err)
-			}
-
-			logger.Info("using fallback proxy CA Secret",
-				"secret", ProxyCAFallbackSecretName,
-				"namespace", ProxyCAFallbackNamespace)
-		} else {
-			return "", fmt.Errorf("failed to get proxy CA Secret %s in namespace %s: %w",
-				ProxyCASecretName, proxyCANamespace, err)
-		}
-	} else {
-		logger.Info("using primary proxy CA Secret",
-			"secret", ProxyCASecretName,
-			"namespace", proxyCANamespace)
+		return "", fmt.Errorf("failed to get proxy CA Secret %s/%s: %w (verify OCM cluster-proxy-addon is installed)",
+			secretNamespace, secretName, err)
 	}
+
+	logger.Info("using proxy CA Secret",
+		"secret", secretName,
+		"namespace", secretNamespace)
 
 	// Extract CA data from Secret
 	caData, ok := secret.Data[ProxyCASecretKey]
 	if !ok {
 		return "", fmt.Errorf("CA data not found in Secret %s/%s (expected key: %s)",
-			secret.Namespace, secret.Name, ProxyCASecretKey)
+			secretNamespace, secretName, ProxyCASecretKey)
 	}
 
 	// Secret data is already base64 encoded (kubernetes.io/tls secrets store binary data)
@@ -233,8 +216,8 @@ func (r *KrknTargetRequestReconciler) getProxyCA(ctx context.Context) (string, e
 	caBase64 := base64.StdEncoding.EncodeToString(caData)
 
 	logger.Info("retrieved proxy CA certificate from Secret",
-		"secret", secret.Name,
-		"namespace", secret.Namespace,
+		"secret", secretName,
+		"namespace", secretNamespace,
 		"ca-length", len(caData))
 
 	return caBase64, nil

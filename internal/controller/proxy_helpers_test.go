@@ -318,11 +318,12 @@ var _ = Describe("Proxy Configuration", func() {
 
 	Describe("getProxyCA", func() {
 		AfterEach(func() {
-			// Clean up env var after each test
-			os.Unsetenv("ACM_PROXY_CA_NAMESPACE")
+			// Clean up env vars after each test
+			os.Unsetenv(ProxyCANamespaceEnvVar)
+			os.Unsetenv(ProxyCASecretNameEnvVar)
 		})
 
-		It("should read CA from primary Secret (multicluster-engine/proxy-server-ca)", func() {
+		It("should read CA from default Secret (multicluster-engine/proxy-server-ca)", func() {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ProxyCASecretName,
@@ -341,26 +342,8 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(ca).To(MatchRegexp("^[A-Za-z0-9+/=]+$"))
 		})
 
-		It("should fallback to secondary Secret when primary not found", func() {
-			// Don't create primary Secret, only fallback
-			fallbackSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCAFallbackSecretName,
-					Namespace: ProxyCAFallbackNamespace,
-				},
-				Data: map[string][]byte{
-					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nFALLBACK_CA_DATA\n-----END CERTIFICATE-----"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, fallbackSecret)).To(Succeed())
-
-			ca, err := reconciler.getProxyCA(ctx)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(ca).ToNot(BeEmpty())
-		})
-
 		It("should respect ACM_PROXY_CA_NAMESPACE environment variable", func() {
-			os.Setenv("ACM_PROXY_CA_NAMESPACE", "custom-namespace")
+			os.Setenv(ProxyCANamespaceEnvVar, "custom-namespace")
 
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -378,10 +361,50 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(ca).ToNot(BeEmpty())
 		})
 
-		It("should return error when Secret not found in both namespaces", func() {
+		It("should respect ACM_PROXY_CA_SECRET_NAME environment variable", func() {
+			os.Setenv(ProxyCASecretNameEnvVar, "custom-proxy-ca")
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "custom-proxy-ca",
+					Namespace: ProxyCASecretNamespace,
+				},
+				Data: map[string][]byte{
+					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nCUSTOM_SECRET_CA_DATA\n-----END CERTIFICATE-----"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			ca, err := reconciler.getProxyCA(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(ca).ToNot(BeEmpty())
+		})
+
+		It("should respect both env vars when both are set", func() {
+			os.Setenv(ProxyCANamespaceEnvVar, "custom-namespace")
+			os.Setenv(ProxyCASecretNameEnvVar, "custom-secret")
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "custom-secret",
+					Namespace: "custom-namespace",
+				},
+				Data: map[string][]byte{
+					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nFULLY_CUSTOM_CA_DATA\n-----END CERTIFICATE-----"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			ca, err := reconciler.getProxyCA(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(ca).ToNot(BeEmpty())
+		})
+
+		It("should return error when Secret not found", func() {
 			_, err := reconciler.getProxyCA(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to get proxy CA Secret from both"))
+			Expect(err.Error()).To(ContainSubstring("failed to get proxy CA Secret"))
+			Expect(err.Error()).To(ContainSubstring("verify OCM cluster-proxy-addon is installed"))
 		})
 
 		It("should return error when ca.crt key missing from Secret", func() {
