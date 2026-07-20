@@ -484,9 +484,9 @@ var _ = Describe("Proxy Configuration", func() {
 	Describe("ensureManifestWork", func() {
 		It("should create ManifestWork when it doesn't exist", func() {
 			err := reconciler.ensureManifestWork(ctx, "test-cluster")
-			// Will fail because ManifestWork CRD doesn't exist in fake client
-			// This is expected - integration tests will cover the full flow
-			Expect(err).To(HaveOccurred())
+			// When creating ManifestWork, returns nil (success)
+			// Full validation happens on subsequent calls
+			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("should return error when ManifestWork exists but not Applied", func() {
@@ -506,12 +506,27 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(config.Enabled).To(BeFalse())
 		})
 
-		It("should return error when proxy mode enabled but resources missing", func() {
+		It("should create ManifestWork and return disabled config when proxy enabled but ManifestWork missing", func() {
 			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "true")
 
-			_, err := reconciler.getProxyConfig(ctx, "test-cluster")
-			Expect(err).To(HaveOccurred())
-			// Should fail on ManifestWork or ManagedProxyConfiguration
+			config, err := reconciler.getProxyConfig(ctx, "test-cluster")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(config).ToNot(BeNil())
+			// When ManifestWork is just created, it returns disabled config temporarily
+			Expect(config.Enabled).To(BeFalse())
+
+			// Verify ManifestWork was created
+			manifestWork := &unstructured.Unstructured{}
+			manifestWork.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "work.open-cluster-management.io",
+				Version: "v1",
+				Kind:    "ManifestWork",
+			})
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ManifestWorkName,
+				Namespace: "test-cluster",
+			}, manifestWork)
+			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 })

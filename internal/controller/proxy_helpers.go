@@ -272,9 +272,13 @@ func (r *KrknTargetRequestReconciler) ensureManifestWork(ctx context.Context, cl
 				return fmt.Errorf("failed to create ManifestWork: %w", err)
 			}
 
-			// After creation, check status (it might not be Applied immediately)
-			// This is a critical error - cluster won't be reachable without RBAC
-			return fmt.Errorf("ManifestWork created but not yet Applied, cluster %s not ready for proxy (will retry on next reconcile)", clusterName)
+			// After creation, ManifestWork needs time to be Applied by OCM agent
+			// Log info and return nil - cluster will be retried on next reconcile
+			logger.Info("ManifestWork created, waiting for OCM to apply it (cluster will be retried)",
+				"cluster", clusterName,
+				"manifestwork", ManifestWorkName,
+				"hint", "ManifestWork needs time to propagate to managed cluster")
+			return nil
 		}
 		return fmt.Errorf("failed to get ManifestWork: %w", err)
 	}
@@ -432,9 +436,37 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 	config.Enabled = true
 
 	// Ensure ManifestWork exists and is Applied
+	// NOTE: ensureManifestWork returns nil IMMEDIATELY after creating a new ManifestWork
+	// (before checking status), so we need to verify status separately
 	err := r.ensureManifestWork(ctx, clusterName)
 	if err != nil {
 		return nil, fmt.Errorf("ManifestWork validation failed for cluster %s: %w", clusterName, err)
+	}
+
+	// After ensureManifestWork succeeds, verify the ManifestWork has status conditions
+	// If just created, it won't have status yet - use direct connection for now
+	manifestWork := &unstructured.Unstructured{}
+	manifestWork.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "work.open-cluster-management.io",
+		Version: "v1",
+		Kind:    "ManifestWork",
+	})
+	err = r.Get(ctx, types.NamespacedName{
+		Name:      ManifestWorkName,
+		Namespace: clusterName,
+	}, manifestWork)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ManifestWork after validation: %w", err)
+	}
+
+	// Check if it has status conditions (meaning OCM agent has processed it)
+	conditions, found, _ := unstructured.NestedSlice(manifestWork.Object, "status", "conditions")
+	if !found || len(conditions) == 0 {
+		// Just created, no status yet - use direct connection for this reconcile
+		logger.Info("ManifestWork recently created, using direct connection temporarily",
+			"cluster", clusterName,
+			"hint", "cluster will use proxy mode in next reconcile after ManifestWork is Applied")
+		return &ProxyConfig{Enabled: false}, nil
 	}
 
 	// Get proxy URL
