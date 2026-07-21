@@ -441,6 +441,9 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 		return config, nil
 	}
 
+	// Proxy mode is enabled - from this point forward, we fail fast on any error.
+	// We NEVER return Enabled=false after this point to prevent silent cluster drops.
+	// Any missing prerequisites (ManifestWork, proxy service, CA) return error.
 	config.Enabled = true
 
 	// Ensure ManifestWork exists and is Applied
@@ -452,7 +455,9 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 	}
 
 	// After ensureManifestWork succeeds, verify the ManifestWork has status conditions
-	// If just created, it won't have status yet - use direct connection for now
+	// If just created (no status yet), we return error to prevent cluster from being
+	// silently dropped when falling back to direct connection and secret is missing.
+	// This ensures proper retry behavior.
 	manifestWork := &unstructured.Unstructured{}
 	manifestWork.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "work.open-cluster-management.io",
