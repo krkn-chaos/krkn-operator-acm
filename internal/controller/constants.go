@@ -66,7 +66,7 @@ const (
 
 	// ServiceAccountTokenPath is the path to the operator's service account token
 	// This token is used for proxy connections instead of managed cluster tokens
-	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- This is a file path, not a credential
 
 	// ServiceAccountNamespacePath is the path to the file containing the operator's namespace
 	ServiceAccountNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -92,7 +92,7 @@ const (
 	ProxyCASecretKey = "ca.crt"
 
 	// ProxyCASecretNameEnvVar is the environment variable to override Secret name
-	ProxyCASecretNameEnvVar = "ACM_PROXY_CA_SECRET_NAME"
+	ProxyCASecretNameEnvVar = "ACM_PROXY_CA_SECRET_NAME" // #nosec G101 -- This is an environment variable name, not a credential
 
 	// ProxyCANamespaceEnvVar is the environment variable to override Secret namespace
 	ProxyCANamespaceEnvVar = "ACM_PROXY_CA_NAMESPACE"
