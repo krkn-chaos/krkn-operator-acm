@@ -27,6 +27,34 @@ Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 //
 // The package enables chaos scenarios to be executed across ACM-managed clusters by
 // discovering and providing cluster credentials to the core krkn-operator.
+//
+// # Cluster Proxy Mode
+//
+// The operator supports optional cluster proxy mode for accessing managed clusters through
+// ACM/OCM cluster-proxy-addon instead of direct API server connections. This is useful when:
+//   - Managed cluster API servers are not directly accessible from the hub
+//   - Clusters are behind firewalls or in private networks
+//   - Centralized access control through ACM is required
+//
+// Configuration (per cluster via ConfigMap krkn-operator-acm-config):
+//   - ACM_USE_PROXY_<CLUSTER_NAME>=true|false (default: false)
+//     Example: ACM_USE_PROXY_LOCAL_CLUSTER=true
+//
+// Prerequisites for proxy mode:
+//   - OCM cluster-proxy-addon installed on hub cluster
+//   - ManifestWork krkn-service-proxy-rbac deployed to managed cluster (auto-created)
+//   - ConfigMap openshift-service-ca.crt in multicluster-engine namespace (OpenShift)
+//
+// The operator automatically:
+//   - Creates ManifestWork with required RBAC on managed clusters
+//   - Discovers proxy service via label component=cluster-proxy-addon-user
+//   - Constructs proxy URL from ManagedProxyConfiguration
+//   - Uses hub operator's service account token for authentication
+//
+// Fail-fast behavior:
+// When proxy mode is enabled but prerequisites missing, the cluster is skipped with explicit
+// error (not silent fallback to direct connection). This ensures configuration issues are
+// visible and clusters are retried in next reconcile.
 package controller
 
 const (
