@@ -355,6 +355,7 @@ func (r *KrknTargetRequestReconciler) createManifestWork(ctx context.Context, cl
 		r.OperatorNamespace, serviceAccountName)
 
 	// Build ManifestWork template with dynamic service account
+	// Creates a custom ClusterRole with minimal permissions needed for krkn chaos testing
 	manifestWorkTemplate := fmt.Sprintf(`apiVersion: work.open-cluster-management.io/v1
 kind: ManifestWork
 metadata:
@@ -366,6 +367,30 @@ spec:
   workload:
     manifests:
       - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: krkn-service-proxy-reader
+          labels:
+            app.kubernetes.io/name: krkn
+            app.kubernetes.io/component: service-proxy-rbac
+        rules:
+          # Read-only access to cluster resources for chaos testing
+          - apiGroups: [""]
+            resources: ["nodes", "pods", "services", "namespaces", "configmaps"]
+            verbs: ["get", "list", "watch"]
+          # Read deployments, daemonsets, statefulsets for workload discovery
+          - apiGroups: ["apps"]
+            resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+            verbs: ["get", "list", "watch"]
+          # Read cluster operator status (OpenShift)
+          - apiGroups: ["config.openshift.io"]
+            resources: ["clusteroperators", "clusterversions"]
+            verbs: ["get", "list"]
+          # Read machine and machineset info (OpenShift machine-api)
+          - apiGroups: ["machine.openshift.io"]
+            resources: ["machines", "machinesets"]
+            verbs: ["get", "list"]
+      - apiVersion: rbac.authorization.k8s.io/v1
         kind: ClusterRoleBinding
         metadata:
           name: krkn-service-proxy-access
@@ -375,7 +400,7 @@ spec:
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: ClusterRole
-          name: cluster-admin
+          name: krkn-service-proxy-reader
         subjects:
           - apiGroup: rbac.authorization.k8s.io
             kind: User

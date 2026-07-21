@@ -70,54 +70,23 @@ var _ = Describe("Proxy Configuration", func() {
 		}
 	})
 
-	Describe("isProxyModeEnabled", func() {
-		It("should return false when config is not set", func() {
+	DescribeTable("isProxyModeEnabled",
+		func(configValue string, shouldSetValue bool, expectedEnabled bool) {
+			if shouldSetValue {
+				store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", configValue)
+			}
 			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeFalse())
-		})
-
-		It("should return true for 'true' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "true")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeTrue())
-		})
-
-		It("should return true for 'yes' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "yes")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeTrue())
-		})
-
-		It("should return true for '1' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "1")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeTrue())
-		})
-
-		It("should return false for 'false' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "false")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeFalse())
-		})
-
-		It("should return false for 'no' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "no")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeFalse())
-		})
-
-		It("should return false for '0' value", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "0")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeFalse())
-		})
-
-		It("should return false for empty string", func() {
-			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "")
-			enabled := isProxyModeEnabled(ctx, "test-cluster")
-			Expect(enabled).To(BeFalse())
-		})
-	})
+			Expect(enabled).To(Equal(expectedEnabled))
+		},
+		Entry("when config is not set", "", false, false),
+		Entry("when value is 'true'", "true", true, true),
+		Entry("when value is 'yes'", "yes", true, true),
+		Entry("when value is '1'", "1", true, true),
+		Entry("when value is 'false'", "false", true, false),
+		Entry("when value is 'no'", "no", true, false),
+		Entry("when value is '0'", "0", true, false),
+		Entry("when value is empty string", "", true, false),
+	)
 
 	Describe("formatProxyVarName", func() {
 		It("should format cluster name with hyphens", func() {
