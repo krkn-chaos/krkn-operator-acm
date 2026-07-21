@@ -446,9 +446,9 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 	}
 
 	// Proxy mode is enabled - from this point forward, we fail fast on any error.
-	// We NEVER return Enabled=false after this point to prevent silent cluster drops.
+	// We NEVER return config with Enabled=false after this check.
 	// Any missing prerequisites (ManifestWork, proxy service, CA) return error.
-	config.Enabled = true
+	// We set config.Enabled=true only AFTER verifying all prerequisites.
 
 	// Ensure ManifestWork exists and is Applied
 	// NOTE: ensureManifestWork returns nil IMMEDIATELY after creating a new ManifestWork
@@ -488,6 +488,10 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 			"Cluster %s will be retried in next reconcile after OCM processes ManifestWork",
 			clusterName)
 	}
+
+	// All prerequisites validated - now we can safely enable proxy mode
+	// From this point, we only populate config fields and return it
+	config.Enabled = true
 
 	// Get proxy URL
 	proxyURL, err := r.getProxyURL(ctx, clusterName)
