@@ -199,11 +199,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Get proxy configuration for this cluster
 		proxyConfig, err := r.getProxyConfig(ctx, clusterName)
 		if err != nil {
-			// This is a configuration issue, not an operator error - use Info instead of Error to avoid stacktrace
-			logger.Info("CLUSTER SKIPPED: proxy mode configuration invalid",
+			// Configuration error - cluster cannot be accessed, log as Error for visibility
+			logger.Error(err, "CLUSTER SKIPPED: proxy mode configuration invalid",
 				"cluster", clusterName,
-				"action", "skipping-cluster",
-				"reason", err.Error())
+				"action", "skipping-cluster")
 			continue
 		}
 
