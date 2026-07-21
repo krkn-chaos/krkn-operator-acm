@@ -21,7 +21,6 @@ package controller
 import (
 	"context"
 	"os"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,11 +34,6 @@ import (
 
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
-
-func TestProxyHelpers(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Proxy Helpers Suite")
-}
 
 var _ = Describe("Proxy Configuration", func() {
 	var (
