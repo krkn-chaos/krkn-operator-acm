@@ -48,6 +48,10 @@ type ProxyConfig struct {
 
 // isProxyModeEnabled checks if proxy mode is enabled for a given cluster
 // via the configstore value ACM_USE_PROXY_<CLUSTER_NAME>
+//
+// NOTE: Uses global configstore singleton (kvstore.Get()) for consistency with
+// rest of codebase (getDefaultSecret, getDefaultProxyMode, ConfigMap sync).
+// See commit 91d3b98 for architectural decision rationale.
 func isProxyModeEnabled(ctx context.Context, clusterName string) bool {
 	logger := log.FromContext(ctx)
 	store := kvstore.Get()
