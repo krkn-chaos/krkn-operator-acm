@@ -313,7 +313,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		proxyDescription := fmt.Sprintf("Enable cluster proxy connection for %s instead of direct API access. "+
 			"Requires cluster-proxy-addon and ManifestWork '%s' to be deployed.",
 			clusterName, ManifestWorkName)
-		proxyDefaultValue := "false"
+		proxyDefaultValue := getDefaultProxyMode(clusterName)
 		proxySeparator := ","
 		proxyAllowedValues := "true,false"
 
@@ -393,6 +393,31 @@ func hasRequiredKeys(data map[string][]byte) bool {
 	_, hasCert := data["ca.crt"]
 	_, hasToken := data["token"]
 	return hasCert && hasToken
+}
+
+// getDefaultProxyMode determines the default proxy mode from configstore
+// Returns the current value from configstore, or "false" if not set
+func getDefaultProxyMode(clusterName string) string {
+	// Get the configstore singleton
+	store := kvstore.Get()
+
+	// Check if there's a configured value in configstore
+	varName := formatProxyVarName(clusterName)
+	if configuredValue, ok := store.GetValue(varName); ok && configuredValue != "" {
+		// Normalize value to "true" or "false"
+		normalized := strings.ToLower(strings.TrimSpace(configuredValue))
+		if normalized == "true" || normalized == "yes" || normalized == "1" {
+			return "true"
+		}
+		if normalized == "false" || normalized == "no" || normalized == "0" {
+			return "false"
+		}
+		// Invalid value, return default
+		return "false"
+	}
+
+	// No configured value, return default
+	return "false"
 }
 
 // getDefaultSecret determines the default secret from a list
