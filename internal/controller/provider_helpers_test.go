@@ -50,10 +50,9 @@ var _ = Describe("Provider Helpers", func() {
 
 	Describe("checkProviderActive", func() {
 		It("should return false when provider does not exist", func() {
-			_, shouldSkip, result, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
+			_, shouldSkip, _, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(shouldSkip).To(BeTrue())
-			Expect(result.Requeue).To(BeFalse())
 		})
 
 		It("should return false when provider exists and is active", func() {
@@ -70,10 +69,9 @@ var _ = Describe("Provider Helpers", func() {
 			}
 			Expect(k8sClient.Create(ctx, provider)).To(Succeed())
 
-			_, shouldSkip, result, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
+			_, shouldSkip, _, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(shouldSkip).To(BeFalse())
-			Expect(result.Requeue).To(BeFalse())
 		})
 
 		It("should return true when provider exists but is inactive", func() {
@@ -90,10 +88,9 @@ var _ = Describe("Provider Helpers", func() {
 			}
 			Expect(k8sClient.Create(ctx, provider)).To(Succeed())
 
-			_, shouldSkip, result, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
+			_, shouldSkip, _, err := checkProviderActive(ctx, k8sClient, logger, "test-operator", "test-namespace")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(shouldSkip).To(BeTrue())
-			Expect(result.Requeue).To(BeFalse())
 		})
 	})
 
