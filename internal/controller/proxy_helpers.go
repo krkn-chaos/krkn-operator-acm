@@ -487,11 +487,11 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 		return nil, fmt.Errorf("failed to parse ManifestWork status conditions: %w (ManifestWork may be malformed)", err)
 	}
 	if !found || len(conditions) == 0 {
-		// Just created, no status yet - use direct connection for this reconcile
-		logger.Info("ManifestWork recently created, using direct connection temporarily",
-			"cluster", clusterName,
-			"hint", "cluster will use proxy mode in next reconcile after ManifestWork is Applied")
-		return &ProxyConfig{Enabled: false}, nil
+		// Just created, no status yet - return error to skip cluster and retry
+		// This ensures cluster is not omitted from KrknTargetRequest if secret is missing
+		return nil, fmt.Errorf("proxy mode enabled but ManifestWork not yet Applied by OCM (just created). "+
+			"Cluster %s will be retried in next reconcile after OCM processes ManifestWork",
+			clusterName)
 	}
 
 	// Get proxy URL
