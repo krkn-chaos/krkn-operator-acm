@@ -482,7 +482,10 @@ func (r *KrknTargetRequestReconciler) getProxyConfig(ctx context.Context, cluste
 	}
 
 	// Check if it has status conditions (meaning OCM agent has processed it)
-	conditions, found, _ := unstructured.NestedSlice(manifestWork.Object, "status", "conditions")
+	conditions, found, err := unstructured.NestedSlice(manifestWork.Object, "status", "conditions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ManifestWork status conditions: %w (ManifestWork may be malformed)", err)
+	}
 	if !found || len(conditions) == 0 {
 		// Just created, no status yet - use direct connection for this reconcile
 		logger.Info("ManifestWork recently created, using direct connection temporarily",
