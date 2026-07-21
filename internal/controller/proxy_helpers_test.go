@@ -317,23 +317,17 @@ var _ = Describe("Proxy Configuration", func() {
 	})
 
 	Describe("getProxyCA", func() {
-		AfterEach(func() {
-			// Clean up env vars after each test
-			os.Unsetenv(ProxyCANamespaceEnvVar)
-			os.Unsetenv(ProxyCASecretNameEnvVar)
-		})
-
-		It("should read CA from default Secret (multicluster-engine/proxy-server-ca)", func() {
-			secret := &corev1.Secret{
+		It("should read CA from default ConfigMap (openshift-service-ca.crt)", func() {
+			configMap := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCASecretName,
-					Namespace: ProxyCASecretNamespace,
+					Name:      "openshift-service-ca.crt",
+					Namespace: "multicluster-engine",
 				},
-				Data: map[string][]byte{
-					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----"),
+				Data: map[string]string{
+					"service-ca.crt": "-----BEGIN CERTIFICATE-----\nTEST_CA_DATA\n-----END CERTIFICATE-----",
 				},
 			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			ca, err := reconciler.getProxyCA(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -342,86 +336,28 @@ var _ = Describe("Proxy Configuration", func() {
 			Expect(ca).To(MatchRegexp("^[A-Za-z0-9+/=]+$"))
 		})
 
-		It("should respect ACM_PROXY_CA_NAMESPACE environment variable", func() {
-			os.Setenv(ProxyCANamespaceEnvVar, "custom-namespace")
-
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCASecretName,
-					Namespace: "custom-namespace",
-				},
-				Data: map[string][]byte{
-					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nCUSTOM_CA_DATA\n-----END CERTIFICATE-----"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-
-			ca, err := reconciler.getProxyCA(ctx)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(ca).ToNot(BeEmpty())
-		})
-
-		It("should respect ACM_PROXY_CA_SECRET_NAME environment variable", func() {
-			os.Setenv(ProxyCASecretNameEnvVar, "custom-proxy-ca")
-
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "custom-proxy-ca",
-					Namespace: ProxyCASecretNamespace,
-				},
-				Data: map[string][]byte{
-					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nCUSTOM_SECRET_CA_DATA\n-----END CERTIFICATE-----"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-
-			ca, err := reconciler.getProxyCA(ctx)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(ca).ToNot(BeEmpty())
-		})
-
-		It("should respect both env vars when both are set", func() {
-			os.Setenv(ProxyCANamespaceEnvVar, "custom-namespace")
-			os.Setenv(ProxyCASecretNameEnvVar, "custom-secret")
-
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "custom-secret",
-					Namespace: "custom-namespace",
-				},
-				Data: map[string][]byte{
-					ProxyCASecretKey: []byte("-----BEGIN CERTIFICATE-----\nFULLY_CUSTOM_CA_DATA\n-----END CERTIFICATE-----"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-
-			ca, err := reconciler.getProxyCA(ctx)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(ca).ToNot(BeEmpty())
-		})
-
-		It("should return error when Secret not found", func() {
+		It("should return error when ConfigMap not found", func() {
 			_, err := reconciler.getProxyCA(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to get proxy CA Secret"))
-			Expect(err.Error()).To(ContainSubstring("verify OCM cluster-proxy-addon is installed"))
+			Expect(err.Error()).To(ContainSubstring("failed to get service CA ConfigMap"))
+			Expect(err.Error()).To(ContainSubstring("verify OpenShift cluster"))
 		})
 
-		It("should return error when ca.crt key missing from Secret", func() {
-			secret := &corev1.Secret{
+		It("should return error when service-ca.crt key missing from ConfigMap", func() {
+			configMap := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      ProxyCASecretName,
-					Namespace: ProxyCASecretNamespace,
+					Name:      "openshift-service-ca.crt",
+					Namespace: "multicluster-engine",
 				},
-				Data: map[string][]byte{
-					"other-key": []byte("some-data"),
+				Data: map[string]string{
+					"other-key": "some-data",
 				},
 			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 
 			_, err := reconciler.getProxyCA(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("CA data not found in Secret"))
+			Expect(err.Error()).To(ContainSubstring("service-ca.crt key not found"))
 		})
 	})
 
