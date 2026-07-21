@@ -355,7 +355,17 @@ func (r *KrknTargetRequestReconciler) createManifestWork(ctx context.Context, cl
 		r.OperatorNamespace, serviceAccountName)
 
 	// Build ManifestWork template with dynamic service account
-	// Creates a custom ClusterRole with minimal permissions needed for krkn chaos testing
+	// Uses cluster-admin ClusterRole for full chaos engineering capabilities.
+	//
+	// SECURITY NOTE: cluster-admin is required because krkn chaos testing needs to:
+	// - Kill/delete critical system pods (etcd, system operators, control plane)
+	// - Modify resources in any namespace (including kube-system, openshift-*)
+	// - Simulate infrastructure failures (drain nodes, delete PVs, etc.)
+	// - Test resilience of cluster-critical components
+	//
+	// Krkn's scope is intentionally destructive testing across all cluster resources.
+	// Restricting permissions would defeat the purpose of chaos engineering.
+	// Only enable proxy mode on clusters where such testing is authorized.
 	manifestWorkTemplate := fmt.Sprintf(`apiVersion: work.open-cluster-management.io/v1
 kind: ManifestWork
 metadata:
@@ -367,30 +377,6 @@ spec:
   workload:
     manifests:
       - apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRole
-        metadata:
-          name: krkn-service-proxy-reader
-          labels:
-            app.kubernetes.io/name: krkn
-            app.kubernetes.io/component: service-proxy-rbac
-        rules:
-          # Read-only access to cluster resources for chaos testing
-          - apiGroups: [""]
-            resources: ["nodes", "pods", "services", "namespaces", "configmaps"]
-            verbs: ["get", "list", "watch"]
-          # Read deployments, daemonsets, statefulsets for workload discovery
-          - apiGroups: ["apps"]
-            resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
-            verbs: ["get", "list", "watch"]
-          # Read cluster operator status (OpenShift)
-          - apiGroups: ["config.openshift.io"]
-            resources: ["clusteroperators", "clusterversions"]
-            verbs: ["get", "list"]
-          # Read machine and machineset info (OpenShift machine-api)
-          - apiGroups: ["machine.openshift.io"]
-            resources: ["machines", "machinesets"]
-            verbs: ["get", "list"]
-      - apiVersion: rbac.authorization.k8s.io/v1
         kind: ClusterRoleBinding
         metadata:
           name: krkn-service-proxy-access
@@ -400,7 +386,7 @@ spec:
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: ClusterRole
-          name: krkn-service-proxy-reader
+          name: cluster-admin
         subjects:
           - apiGroup: rbac.authorization.k8s.io
             kind: User
