@@ -26,6 +26,13 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - get
+  - list
+- apiGroups:
   - cluster.open-cluster-management.io
   resources:
   - managedclusters
@@ -73,3 +80,22 @@ rules:
   - krkntargetrequests/finalizers
   verbs:
   - update
+- apiGroups:
+  - proxy.open-cluster-management.io
+  resources:
+  - managedproxyconfigurations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - work.open-cluster-management.io
+  resources:
+  - manifestworks
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch

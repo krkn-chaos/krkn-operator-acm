@@ -27,6 +27,34 @@ Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 //
 // The package enables chaos scenarios to be executed across ACM-managed clusters by
 // discovering and providing cluster credentials to the core krkn-operator.
+//
+// # Cluster Proxy Mode
+//
+// The operator supports optional cluster proxy mode for accessing managed clusters through
+// ACM/OCM cluster-proxy-addon instead of direct API server connections. This is useful when:
+//   - Managed cluster API servers are not directly accessible from the hub
+//   - Clusters are behind firewalls or in private networks
+//   - Centralized access control through ACM is required
+//
+// Configuration (per cluster via ConfigMap krkn-operator-acm-config):
+//   - ACM_USE_PROXY_<CLUSTER_NAME>=true|false (default: false)
+//     Example: ACM_USE_PROXY_LOCAL_CLUSTER=true
+//
+// Prerequisites for proxy mode:
+//   - OCM cluster-proxy-addon installed on hub cluster
+//   - ManifestWork krkn-service-proxy-rbac deployed to managed cluster (auto-created)
+//   - ConfigMap openshift-service-ca.crt in multicluster-engine namespace (OpenShift)
+//
+// The operator automatically:
+//   - Creates ManifestWork with required RBAC on managed clusters
+//   - Discovers proxy service via label component=cluster-proxy-addon-user
+//   - Constructs proxy URL from ManagedProxyConfiguration
+//   - Uses hub operator's service account token for authentication
+//
+// Fail-fast behavior:
+// When proxy mode is enabled but prerequisites missing, the cluster is skipped with explicit
+// error (not silent fallback to direct connection). This ensures configuration issues are
+// visible and clusters are retried in next reconcile.
 package controller
 
 const (
@@ -50,4 +78,50 @@ const (
 
 	// StatusCompleted represents a completed resource status
 	StatusCompleted = "Completed"
+
+	// ProxyConfigVarPrefix is the prefix for proxy mode configuration variables
+	// Each managed cluster gets a variable named ACM_USE_PROXY_<CLUSTER_NAME>
+	ProxyConfigVarPrefix = "ACM_USE_PROXY_"
+
+	// ProxyCAConfigMapName is the name of the ConfigMap containing proxy CA certificate
+	// This ConfigMap must exist in the operator namespace with annotation
+	// service.beta.openshift.io/inject-cabundle: "true"
+	ProxyCAConfigMapName = "cluster-proxy-service-ca"
+
+	// ManifestWorkName is the name of the ManifestWork deployed to managed clusters
+	// This ManifestWork creates the necessary RBAC for proxy access
+	ManifestWorkName = "krkn-service-proxy-rbac"
+
+	// ServiceAccountTokenPath is the path to the operator's service account token
+	// This token is used for proxy connections instead of managed cluster tokens
+	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- This is a file path, not a credential
+
+	// ServiceAccountNamespacePath is the path to the file containing the operator's namespace
+	ServiceAccountNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+	// DefaultServiceAccountName is the default service account name if not detected
+	DefaultServiceAccountName = "controller-manager"
+
+	// ProxyServiceLabel is the label selector for finding the cluster proxy service
+	ProxyServiceLabel = "component"
+
+	// ProxyServiceLabelValue is the value of the component label for proxy services
+	ProxyServiceLabelValue = "cluster-proxy-addon-user"
+
+	// ProxyCASecretName is the default name of the Secret containing proxy CA certificate
+	// Can be overridden via ACM_PROXY_CA_SECRET_NAME environment variable
+	ProxyCASecretName = "proxy-server-ca"
+
+	// ProxyCASecretNamespace is the default namespace for proxy CA Secret
+	// Can be overridden via ACM_PROXY_CA_NAMESPACE environment variable
+	ProxyCASecretNamespace = "multicluster-engine"
+
+	// ProxyCASecretKey is the key in the Secret containing the CA certificate
+	ProxyCASecretKey = "ca.crt"
+
+	// ProxyCASecretNameEnvVar is the environment variable to override Secret name
+	ProxyCASecretNameEnvVar = "ACM_PROXY_CA_SECRET_NAME" // #nosec G101 -- This is an environment variable name, not a credential
+
+	// ProxyCANamespaceEnvVar is the environment variable to override Secret namespace
+	ProxyCANamespaceEnvVar = "ACM_PROXY_CA_NAMESPACE"
 )

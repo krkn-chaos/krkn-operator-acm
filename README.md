@@ -12,6 +12,7 @@ Red Hat Advanced Cluster Management (ACM) integration for krkn-operator. Automat
 
 ## License
 
+
 Copyright 2025 krkn-chaos
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

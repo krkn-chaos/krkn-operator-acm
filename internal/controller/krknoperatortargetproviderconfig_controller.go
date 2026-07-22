@@ -303,6 +303,39 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		logger.Info("added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
 	}
 
+	// Add proxy mode toggle for each cluster
+	for _, cluster := range managedClusters.Items {
+		clusterName := cluster.Metadata.Name
+
+		// Create proxy mode toggle field
+		proxyVarName := formatProxyVarName(clusterName)
+		proxyShortDesc := fmt.Sprintf("Proxy mode for %s", clusterName)
+		proxyDescription := fmt.Sprintf("Enable cluster proxy connection for %s instead of direct API access. "+
+			"Requires cluster-proxy-addon and ManifestWork '%s' to be deployed.",
+			clusterName, ManifestWorkName)
+		proxyDefaultValue := getDefaultProxyMode(clusterName)
+		proxySeparator := ","
+		proxyAllowedValues := "true,false"
+
+		proxyField := typing.InputField{
+			Name:             &proxyVarName,
+			ShortDescription: &proxyShortDesc,
+			Description:      &proxyDescription,
+			Variable:         &proxyVarName,
+			Type:             typing.Enum,
+			Default:          &proxyDefaultValue,
+			Separator:        &proxySeparator,
+			AllowedValues:    &proxyAllowedValues,
+			Required:         false,
+			Secret:           false,
+		}
+
+		fields = append(fields, proxyField)
+		logger.Info("added proxy config field for cluster",
+			"cluster", clusterName,
+			"variable", proxyVarName)
+	}
+
 	// Serialize fields to JSON using InputField.MarshalJSON
 	// which preserves the format expected by the parser
 	var jsonFields []json.RawMessage
@@ -360,6 +393,31 @@ func hasRequiredKeys(data map[string][]byte) bool {
 	_, hasCert := data["ca.crt"]
 	_, hasToken := data["token"]
 	return hasCert && hasToken
+}
+
+// getDefaultProxyMode determines the default proxy mode from configstore
+// Returns the current value from configstore, or "false" if not set
+func getDefaultProxyMode(clusterName string) string {
+	// Get the configstore singleton
+	store := kvstore.Get()
+
+	// Check if there's a configured value in configstore
+	varName := formatProxyVarName(clusterName)
+	if configuredValue, ok := store.GetValue(varName); ok && configuredValue != "" {
+		// Normalize value to "true" or "false"
+		normalized := strings.ToLower(strings.TrimSpace(configuredValue))
+		if normalized == "true" || normalized == "yes" || normalized == "1" {
+			return "true"
+		}
+		if normalized == "false" || normalized == "no" || normalized == "0" {
+			return "false"
+		}
+		// Invalid value, return default
+		return "false"
+	}
+
+	// No configured value, return default
+	return "false"
 }
 
 // getDefaultSecret determines the default secret from a list

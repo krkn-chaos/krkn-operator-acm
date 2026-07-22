@@ -19,8 +19,18 @@ Assisted-by: Claude Sonnet 4.5 (claude-sonnet-4-5@20250929)
 package controller
 
 import (
+	"context"
 	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
 
@@ -259,3 +269,197 @@ func TestHasRequiredKeys(t *testing.T) {
 		})
 	}
 }
+
+// Ginkgo-style tests for additional coverage
+var _ = Describe("KrknOperatorTargetProviderConfig Controller Helpers (Ginkgo)", func() {
+	var (
+		ctx        context.Context
+		k8sClient  client.Client
+		scheme     *runtime.Scheme
+		reconciler *KrknOperatorTargetProviderConfigReconciler
+		store      *kvstore.Store
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		scheme = runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		k8sClient = fake.NewClientBuilder().WithScheme(scheme).Build()
+		store = kvstore.Get()
+
+		reconciler = &KrknOperatorTargetProviderConfigReconciler{
+			Client:            k8sClient,
+			Scheme:            scheme,
+			OperatorName:      "krkn-operator-acm",
+			OperatorNamespace: "krkn-operator-system",
+		}
+	})
+
+	AfterEach(func() {
+		// Clear configstore after each test
+		if store != nil {
+			snapshot := store.Snapshot()
+			for key := range snapshot {
+				store.Delete(key)
+			}
+		}
+	})
+
+	Describe("getDefaultProxyMode", func() {
+		It("should return false when not configured", func() {
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should return true for 'true' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "true")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("true"))
+		})
+
+		It("should return true for 'yes' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "yes")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("true"))
+		})
+
+		It("should return true for '1' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "1")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("true"))
+		})
+
+		It("should return false for 'false' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "false")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should return false for 'no' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "no")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should return false for '0' value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "0")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should return false for empty string", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should return false for invalid value", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "invalid")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("false"))
+		})
+
+		It("should normalize values with whitespace", func() {
+			store.SetValue("ACM_USE_PROXY_TEST_CLUSTER", "  TRUE  ")
+			mode := getDefaultProxyMode("test-cluster")
+			Expect(mode).To(Equal("true"))
+		})
+	})
+
+	Describe("listSecretsInNamespace", func() {
+		It("should return empty list when namespace has no secrets", func() {
+			secrets, err := reconciler.listSecretsInNamespace(ctx, "empty-namespace")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(secrets).To(BeEmpty())
+		})
+
+		It("should return only secrets with required keys", func() {
+			// Create secret with both keys
+			validSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "valid-secret",
+					Namespace: "test-namespace",
+				},
+				Data: map[string][]byte{
+					"ca.crt": []byte("test-ca"),
+					"token":  []byte("test-token"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, validSecret)).To(Succeed())
+
+			// Create secret with missing keys
+			invalidSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "invalid-secret",
+					Namespace: "test-namespace",
+				},
+				Data: map[string][]byte{
+					"other-key": []byte("test-data"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, invalidSecret)).To(Succeed())
+
+			secrets, err := reconciler.listSecretsInNamespace(ctx, "test-namespace")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(secrets).To(HaveLen(1))
+			Expect(secrets[0]).To(Equal("valid-secret"))
+		})
+
+		It("should filter out secrets missing ca.crt", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "no-ca-secret",
+					Namespace: "test-namespace",
+				},
+				Data: map[string][]byte{
+					"token": []byte("test-token"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			secrets, err := reconciler.listSecretsInNamespace(ctx, "test-namespace")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(secrets).To(BeEmpty())
+		})
+
+		It("should filter out secrets missing token", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "no-token-secret",
+					Namespace: "test-namespace",
+				},
+				Data: map[string][]byte{
+					"ca.crt": []byte("test-ca"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			secrets, err := reconciler.listSecretsInNamespace(ctx, "test-namespace")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(secrets).To(BeEmpty())
+		})
+	})
+
+	Describe("getConfigDataKeys", func() {
+		It("should return empty slice for nil map", func() {
+			keys := getConfigDataKeys(nil)
+			Expect(keys).To(BeEmpty())
+		})
+
+		It("should return empty slice for empty map", func() {
+			keys := getConfigDataKeys(map[string]krknv1alpha1.ProviderConfigData{})
+			Expect(keys).To(BeEmpty())
+		})
+
+		It("should return all keys from map", func() {
+			configData := map[string]krknv1alpha1.ProviderConfigData{
+				"operator1": {},
+				"operator2": {},
+				"operator3": {},
+			}
+			keys := getConfigDataKeys(configData)
+			Expect(keys).To(HaveLen(3))
+			Expect(keys).To(ContainElements("operator1", "operator2", "operator3"))
+		})
+	})
+})
