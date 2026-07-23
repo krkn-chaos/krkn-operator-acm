@@ -106,10 +106,9 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 	})
 
 	Describe("Field group assignment", func() {
-		It("should assign secret fields to ACM_SECRET_GROUP", func() {
+		It("should assign secret fields to ACM_SECRET_GROUP without mutual exclusion", func() {
 			clusterName := "test-cluster"
 			varName := formatNamespaceToVarName(clusterName)
-			proxyVarName := formatProxyVarName(clusterName)
 			secretGroupName := "ACM_SECRET_GROUP"
 			shortDesc := "Test Secret"
 			desc := "Test Description"
@@ -126,19 +125,20 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 				Default:          &defaultVal,
 				Separator:        &separator,
 				AllowedValues:    &allowedValues,
-				Required:         true,
+				Required:         false,
 				Secret:           false,
 				Group:            &secretGroupName,
-				MutuallyExcludes: &proxyVarName,
 			}
 
 			// Verify group assignment
 			Expect(secretField.Group).ToNot(BeNil())
 			Expect(*secretField.Group).To(Equal("ACM_SECRET_GROUP"))
 
-			// Verify mutual exclusion
-			Expect(secretField.MutuallyExcludes).ToNot(BeNil())
-			Expect(*secretField.MutuallyExcludes).To(Equal("ACM_USE_PROXY_TEST_CLUSTER"))
+			// Verify NO mutual exclusion (unidirectional: only proxy excludes secret)
+			Expect(secretField.MutuallyExcludes).To(BeNil())
+
+			// Verify not required
+			Expect(secretField.Required).To(BeFalse())
 		})
 
 		It("should assign proxy fields to ACM_USE_PROXY_GROUP", func() {
@@ -178,7 +178,7 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 	})
 
 	Describe("Mutual exclusion between secret and proxy fields", func() {
-		It("should create bidirectional mutual exclusion for each cluster", func() {
+		It("should create unidirectional mutual exclusion (proxy excludes secret)", func() {
 			clusters := []string{"cluster-1", "cluster-2", "cluster-3"}
 
 			for _, cluster := range clusters {
@@ -189,10 +189,9 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 				Expect(secretVarName).To(HavePrefix("ACM_SECRET_"))
 				Expect(proxyVarName).To(HavePrefix("ACM_USE_PROXY_"))
 
-				// Verify they reference each other
 				// In the actual implementation:
-				// - secretField.MutuallyExcludes points to proxyVarName
-				// - proxyField.MutuallyExcludes points to secretVarName
+				// - secretField.MutuallyExcludes is nil (secrets don't exclude proxy)
+				// - proxyField.MutuallyExcludes points to secretVarName (proxy excludes secret)
 			}
 		})
 
@@ -204,9 +203,10 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 			Expect(secretVar).To(Equal("ACM_SECRET_MY_CLUSTER"))
 			Expect(proxyVar).To(Equal("ACM_USE_PROXY_MY_CLUSTER"))
 
-			// Both should reference the same cluster
-			// Secret field: ACM_SECRET_MY_CLUSTER mutually excludes ACM_USE_PROXY_MY_CLUSTER
+			// Unidirectional exclusion:
+			// Secret field: ACM_SECRET_MY_CLUSTER has NO mutual exclusion
 			// Proxy field: ACM_USE_PROXY_MY_CLUSTER mutually excludes ACM_SECRET_MY_CLUSTER
+			// This means: when proxy is enabled, the secret selection is ignored
 		})
 	})
 
@@ -237,10 +237,52 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 	})
 
 	Describe("JSON serialization with groups", func() {
-		It("should serialize fields with group attribute", func() {
+		It("should serialize proxy fields with group and mutual exclusion", func() {
+			varName := "ACM_USE_PROXY_TEST"
+			groupName := "ACM_USE_PROXY_GROUP"
+			mutuallyExcludes := "ACM_SECRET_TEST"
+			shortDesc := "Test"
+			desc := "Test field"
+			defaultVal := "false"
+			separator := ","
+			allowedValues := "true,false"
+
+			field := typing.InputField{
+				Name:             &varName,
+				ShortDescription: &shortDesc,
+				Description:      &desc,
+				Variable:         &varName,
+				Type:             typing.Enum,
+				Default:          &defaultVal,
+				Separator:        &separator,
+				AllowedValues:    &allowedValues,
+				Required:         false,
+				Secret:           false,
+				Group:            &groupName,
+				MutuallyExcludes: &mutuallyExcludes,
+			}
+
+			jsonData, err := field.MarshalJSON()
+			Expect(err).ToNot(HaveOccurred())
+
+			var unmarshaled map[string]interface{}
+			err = json.Unmarshal(jsonData, &unmarshaled)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify group is serialized
+			Expect(unmarshaled["group"]).To(Equal("ACM_USE_PROXY_GROUP"))
+
+			// Verify mutually_excludes is serialized (proxy excludes secret)
+			Expect(unmarshaled["mutually_excludes"]).To(Equal("ACM_SECRET_TEST"))
+
+			// Verify other standard fields
+			Expect(unmarshaled["name"]).To(Equal("ACM_USE_PROXY_TEST"))
+			Expect(unmarshaled["type"]).To(Equal("enum"))
+		})
+
+		It("should serialize secret fields with group but NO mutual exclusion", func() {
 			varName := "ACM_SECRET_TEST"
 			groupName := "ACM_SECRET_GROUP"
-			mutuallyExcludes := "ACM_USE_PROXY_TEST"
 			shortDesc := "Test"
 			desc := "Test field"
 			defaultVal := "default"
@@ -256,10 +298,9 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 				Default:          &defaultVal,
 				Separator:        &separator,
 				AllowedValues:    &allowedValues,
-				Required:         true,
+				Required:         false,
 				Secret:           false,
 				Group:            &groupName,
-				MutuallyExcludes: &mutuallyExcludes,
 			}
 
 			jsonData, err := field.MarshalJSON()
@@ -272,8 +313,8 @@ var _ = Describe("Configuration Schema with Field Groups", func() {
 			// Verify group is serialized
 			Expect(unmarshaled["group"]).To(Equal("ACM_SECRET_GROUP"))
 
-			// Verify mutually_excludes is serialized
-			Expect(unmarshaled["mutually_excludes"]).To(Equal("ACM_USE_PROXY_TEST"))
+			// Verify mutually_excludes is NOT serialized (secret doesn't exclude proxy)
+			Expect(unmarshaled["mutually_excludes"]).To(BeNil())
 
 			// Verify other standard fields
 			Expect(unmarshaled["name"]).To(Equal("ACM_SECRET_TEST"))
