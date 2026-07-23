@@ -258,6 +258,37 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 	// Build input fields for each cluster
 	var fields []typing.InputField
 
+	// Create group definitions
+	secretGroupName := "ACM_SECRET_GROUP"
+	secretGroupShortDesc := "ACM/OCM Secret Selection"
+	secretGroupDesc := "Select secrets for direct API connection to managed clusters. Each secret contains the CA certificate and service account token for cluster authentication."
+
+	secretGroupField := typing.InputField{
+		Name:             &secretGroupName,
+		ShortDescription: &secretGroupShortDesc,
+		Description:      &secretGroupDesc,
+		Variable:         &secretGroupName,
+		Type:             typing.Group,
+		Required:         false,
+		Secret:           false,
+	}
+	fields = append(fields, secretGroupField)
+
+	proxyGroupName := "ACM_USE_PROXY_GROUP"
+	proxyGroupShortDesc := "Cluster Proxy Configuration"
+	proxyGroupDesc := "Enable cluster proxy connection for managed clusters. Note: Activating proxy for a cluster overrides the secret selection and uses the cluster-proxy-addon for communication. To return to direct API access, disable the proxy for that cluster. Requires cluster-proxy-addon and ManifestWork to be deployed."
+
+	proxyGroupField := typing.InputField{
+		Name:             &proxyGroupName,
+		ShortDescription: &proxyGroupShortDesc,
+		Description:      &proxyGroupDesc,
+		Variable:         &proxyGroupName,
+		Type:             typing.Group,
+		Required:         false,
+		Secret:           false,
+	}
+	fields = append(fields, proxyGroupField)
+
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
 
@@ -284,6 +315,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 			clusterName, strings.Join(secrets, ", "))
 		separator := ","
 		allowedValues := strings.Join(secrets, ",")
+		proxyVarName := formatProxyVarName(clusterName)
 
 		// Build the InputField using typing package
 		field := typing.InputField{
@@ -297,6 +329,8 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 			AllowedValues:    &allowedValues,
 			Required:         true,
 			Secret:           false,
+			Group:            &secretGroupName,
+			MutuallyExcludes: &proxyVarName,
 		}
 
 		fields = append(fields, field)
@@ -309,6 +343,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 
 		// Create proxy mode toggle field
 		proxyVarName := formatProxyVarName(clusterName)
+		secretVarName := formatNamespaceToVarName(clusterName)
 		proxyShortDesc := fmt.Sprintf("Proxy mode for %s", clusterName)
 		proxyDescription := fmt.Sprintf("Enable cluster proxy connection for %s instead of direct API access. "+
 			"Requires cluster-proxy-addon and ManifestWork '%s' to be deployed.",
@@ -328,6 +363,8 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 			AllowedValues:    &proxyAllowedValues,
 			Required:         false,
 			Secret:           false,
+			Group:            &proxyGroupName,
+			MutuallyExcludes: &secretVarName,
 		}
 
 		fields = append(fields, proxyField)
