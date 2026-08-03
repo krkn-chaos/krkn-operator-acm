@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -65,9 +67,13 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	crdPaths := []string{filepath.Join("..", "..", "config", "crd", "bases")}
+	if depCRDPath := getModuleCRDPath("github.com/krkn-chaos/krkn-operator"); depCRDPath != "" {
+		crdPaths = append(crdPaths, depCRDPath)
+	}
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: true,
+		CRDDirectoryPaths:     crdPaths,
+		ErrorIfCRDPathMissing: false,
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
@@ -91,6 +97,17 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// getModuleCRDPath resolves the CRD directory from a Go module dependency.
+func getModuleCRDPath(module string) string {
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", module)
+	out, err := cmd.Output()
+	if err != nil {
+		logf.Log.Error(err, "Failed to resolve module directory", "module", module)
+		return ""
+	}
+	return filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "bases")
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by
