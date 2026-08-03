@@ -289,6 +289,10 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 	}
 	fields = append(fields, proxyGroupField)
 
+	// Track clusters that have a secret field emitted, so proxy fields
+	// only set MutuallyExcludes when the referenced secret field exists.
+	clustersWithSecrets := make(map[string]bool)
+
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
 
@@ -316,8 +320,6 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		separator := ","
 		allowedValues := strings.Join(secrets, ",")
 
-		// Build the InputField using typing package
-		// Note: Secret fields do NOT mutually exclude proxy fields
 		// Only proxy fields mutually exclude secrets (unidirectional)
 		field := typing.InputField{
 			Name:             &varName,
@@ -334,6 +336,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		}
 
 		fields = append(fields, field)
+		clustersWithSecrets[clusterName] = true
 		logger.Info("added config field for cluster", "cluster", clusterName, "variable", varName, "secret-count", len(secrets))
 	}
 
@@ -364,7 +367,11 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 			Required:         false,
 			Secret:           false,
 			Group:            &proxyGroupName,
-			MutuallyExcludes: &secretVarName,
+		}
+
+		// Only set MutuallyExcludes when the secret field was actually emitted
+		if clustersWithSecrets[clusterName] {
+			proxyField.MutuallyExcludes = &secretVarName
 		}
 
 		fields = append(fields, proxyField)
