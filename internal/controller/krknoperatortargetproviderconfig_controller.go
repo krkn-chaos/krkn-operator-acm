@@ -260,7 +260,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 
 	// Create group definitions
 	secretGroupName := "ACM_SECRET_GROUP"
-	secretGroupShortDesc := "ACM/OCM Secret Selection"
+	secretGroupShortDesc := "ACM/OCM Secret Selection" // #nosec G101 -- UI label, not a credential
 	secretGroupDesc := "Select secrets for direct API connection to managed clusters. Each secret contains the CA certificate and service account token for cluster authentication."
 
 	secretGroupField := typing.InputField{
