@@ -320,7 +320,8 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 		separator := ","
 		allowedValues := strings.Join(secrets, ",")
 
-		// Only proxy fields mutually exclude secrets (unidirectional)
+		// Required: a secret must be selected when proxy mode is disabled.
+		// When proxy is enabled, its MutuallyExcludes overrides this constraint.
 		field := typing.InputField{
 			Name:             &varName,
 			ShortDescription: &shortDesc,
@@ -330,7 +331,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) buildConfigSchema(ctx conte
 			Default:          &defaultSecret,
 			Separator:        &separator,
 			AllowedValues:    &allowedValues,
-			Required:         false,
+			Required:         true,
 			Secret:           false,
 			Group:            &secretGroupName,
 		}
