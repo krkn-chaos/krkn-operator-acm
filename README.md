@@ -4,15 +4,13 @@
 ![pr-checks](https://github.com/krkn-chaos/krkn-operator-acm/actions/workflows/pr-checks.yml/badge.svg)
 ![coverage](https://krkn-chaos.github.io/krkn-lib-docs/coverage_badge_krkn-operator-acm.svg)
 
-Red Hat Advanced Cluster Management (ACM) integration for krkn-operator. Automatically discovers and configures access to managed clusters, enabling chaos engineering scenarios across multi-cluster environments.
 
-## Documentation
+**Open Cluster Management integration for [Krkn Operator](https://github.com/krkn-chaos/krkn-operator).**
 
-📖 **[Official Documentation](https://krkn-chaos.dev/docs/krkn-operator)**
+Krkn Operator ACM automatically discovers and configures access to clusters managed by Open Cluster Management (OCM) and Red Hat Advanced Cluster Management (ACM), enabling centralized chaos engineering across multi-cluster environments.
+
+📖 **[Official Krkn Operator Documentation](https://krkn-chaos.gateway.scarf.sh/krkn-operator/docs?source=github-acm)**
 
 ## License
 
-
-Copyright 2025 krkn-chaos
-
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Licensed under the [Apache License 2.0](LICENSE).
