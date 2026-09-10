@@ -150,7 +150,11 @@ func TestReconcileCompletesExistingContribution(t *testing.T) {
 	}
 
 	reconciler := &KrknTargetRequestReconciler{
-		Client:            fake.NewClientBuilder().WithScheme(scheme).WithObjects(request, providerObject).Build(),
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(request).
+			WithObjects(request, providerObject).
+			Build(),
 		Scheme:            scheme,
 		OperatorName:      "krkn-operator-acm",
 		OperatorNamespace: "operator-system",
