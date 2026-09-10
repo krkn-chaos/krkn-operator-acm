@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -92,7 +93,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 			if err != nil {
 				if errors.IsConflict(err) {
 					logger.Info("conflict updating labels, will retry")
-					return ctrl.Result{Requeue: true}, nil
+					return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 				}
 				logger.Error(err, "failed to add UUID label")
 				return ctrl.Result{}, err
@@ -107,7 +108,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		if err != nil {
 			if errors.IsConflict(err) {
 				logger.Info("conflict initializing status, will retry")
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 			}
 			logger.Error(err, "failed to initialize status")
 			return ctrl.Result{}, err
@@ -171,7 +172,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 		// If there's a conflict, requeue to retry with the latest version
 		if errors.IsConflict(err) {
 			logger.Info("conflict updating provider config, will retry", "UUID", freshConfig.Spec.UUID)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 		}
 		logger.Error(err, "failed to update provider config")
 		return ctrl.Result{}, err
@@ -212,7 +213,7 @@ func (r *KrknOperatorTargetProviderConfigReconciler) Reconcile(ctx context.Conte
 	if err != nil {
 		if errors.IsConflict(err) {
 			logger.Info("conflict updating status, will retry", "UUID", updatedConfig.Spec.UUID)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 		}
 		logger.Error(err, "failed to update KrknOperatorTargetProviderConfig status")
 		return ctrl.Result{}, err
