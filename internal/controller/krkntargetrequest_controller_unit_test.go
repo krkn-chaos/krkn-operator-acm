@@ -20,17 +20,107 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	krknv1alpha1 "github.com/krkn-chaos/krkn-operator/api/v1alpha1"
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
+
+func TestBuildClusterTargetWithLiveness(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantOnline bool
+	}{
+		{name: "online cluster", statusCode: http.StatusOK, wantOnline: true},
+		{name: "offline cluster", statusCode: http.StatusServiceUnavailable, wantOnline: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer server.Close()
+
+			target := buildClusterTargetWithLiveness(
+				context.Background(),
+				"managed-cluster",
+				server.URL,
+				testLivenessKubeconfig(t, server.URL),
+			)
+
+			if target.Online == nil {
+				t.Fatal("Online is nil, want a liveness result")
+			}
+			if *target.Online != tt.wantOnline {
+				t.Fatalf("Online = %v, want %v", *target.Online, tt.wantOnline)
+			}
+			if target.CheckedAt == nil || target.CheckedAt.IsZero() {
+				t.Fatal("CheckedAt is nil or zero")
+			}
+			if target.ClusterName != "managed-cluster" || target.ClusterAPIURL != server.URL {
+				t.Fatalf("target identity = %+v", target)
+			}
+		})
+	}
+}
+
+func TestOfflineClusterTarget(t *testing.T) {
+	target := offlineClusterTarget("offline-cluster", "https://offline.example.com:6443")
+
+	if target.ClusterName != "offline-cluster" {
+		t.Fatalf("ClusterName = %q, want %q", target.ClusterName, "offline-cluster")
+	}
+	if target.ClusterAPIURL != "https://offline.example.com:6443" {
+		t.Fatalf("ClusterAPIURL = %q, want %q", target.ClusterAPIURL, "https://offline.example.com:6443")
+	}
+	if target.Online == nil || *target.Online {
+		t.Fatal("Online should be false for an offline cluster")
+	}
+	if target.CheckedAt == nil || target.CheckedAt.IsZero() {
+		t.Fatal("CheckedAt should be populated for an offline cluster")
+	}
+}
+
+func TestProviderContributionIsStable(t *testing.T) {
+	target := offlineClusterTarget("offline-cluster", "https://offline.example.com:6443")
+	request := krknv1alpha1.KrknTargetRequestStatus{
+		TargetData: map[string][]krknv1alpha1.ClusterTarget{
+			"krkn-operator-acm": {target},
+		},
+	}
+
+	if _, contributed := request.TargetData["krkn-operator-acm"]; !contributed {
+		t.Fatal("expected ACM provider contribution to be detected")
+	}
+}
+
+func testLivenessKubeconfig(t *testing.T, serverURL string) string {
+	t.Helper()
+	config := clientcmdapi.NewConfig()
+	config.Clusters["test"] = &clientcmdapi.Cluster{Server: serverURL}
+	config.AuthInfos["test-user"] = &clientcmdapi.AuthInfo{}
+	config.Contexts["test-context"] = &clientcmdapi.Context{Cluster: "test", AuthInfo: "test-user"}
+	config.CurrentContext = "test-context"
+
+	data, err := clientcmd.Write(*config)
+	if err != nil {
+		t.Fatalf("failed to write test kubeconfig: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
 
 func TestGetConfiguredSecretName(t *testing.T) {
 	// Setup

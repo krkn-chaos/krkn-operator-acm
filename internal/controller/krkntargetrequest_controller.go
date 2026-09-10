@@ -169,6 +169,15 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return result, nil
 	}
 
+	// A status update triggers another reconcile of the same request. Once this
+	// provider has contributed, keep its snapshot stable while other providers
+	// finish contributing instead of re-running liveness and updating checked-at.
+	if _, contributed := krknRequest.Status.TargetData[r.OperatorName]; contributed {
+		logger.Info("provider already contributed to krknTargetRequest, waiting for other providers",
+			"provider-name", r.OperatorName)
+		return ctrl.Result{}, nil
+	}
+
 	logger.Info("processing krknTargetRequest", "UUID", krknRequest.Spec.UUID)
 
 	// Get managed clusters
@@ -189,7 +198,8 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		logger.Info("processing cluster", "name", clusterName)
 
 		if len(cluster.Spec.ManagedClusterClientConfigs) == 0 {
-			logger.Info("cluster has no client configs, skipping", "name", clusterName)
+			logger.Info("cluster has no client configs, marking offline", "name", clusterName)
+			targetData = append(targetData, offlineClusterTarget(clusterName, ""))
 			continue
 		}
 
@@ -200,9 +210,10 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		proxyConfig, err := r.getProxyConfig(ctx, clusterName)
 		if err != nil {
 			// Configuration error - cluster cannot be accessed, log as Error for visibility
-			logger.Error(err, "CLUSTER SKIPPED: proxy mode configuration invalid",
+			logger.Error(err, "proxy mode configuration invalid, marking cluster offline",
 				"cluster", clusterName,
-				"action", "skipping-cluster")
+				"action", "marking-offline")
+			targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
 			continue
 		}
 
@@ -219,12 +230,13 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			secret, err := r.getClusterSecret(ctx, clusterName, secretName)
 			if err != nil {
 				if errors.IsNotFound(err) {
-					logger.Error(err, "CLUSTER SKIPPED: secret not found in direct mode, configure a valid secret or enable proxy",
+					logger.Error(err, "secret not found in direct mode, marking cluster offline",
 						"cluster", clusterName, "secret", secretName)
 				} else {
-					logger.Error(err, "failed to get cluster secret",
+					logger.Error(err, "failed to get cluster secret, marking cluster offline",
 						"cluster", clusterName, "secret", secretName)
 				}
+				targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
 				continue
 			}
 
@@ -233,6 +245,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if !ok {
 				logger.Error(fmt.Errorf("token not found in secret"), "missing token",
 					"cluster", clusterName)
+				targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
 				continue
 			}
 			token = string(tokenBytes)
@@ -242,6 +255,11 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, token, proxyConfig)
 		if err != nil {
 			logger.Error(err, "failed to generate kubeconfig", "cluster", clusterName)
+			actualURL := clusterURL
+			if proxyConfig.Enabled {
+				actualURL = proxyConfig.ProxyURL
+			}
+			targetData = append(targetData, offlineClusterTarget(clusterName, actualURL))
 			continue
 		}
 
@@ -254,16 +272,21 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			actualURL = proxyConfig.ProxyURL
 		}
 
+		// Check liveness with the same kubeconfig that will be returned to the
+		// consumer. Keep the target in the request even when the check fails so
+		// the CRD records the discovery result and the failure remains visible.
+		target := buildClusterTargetWithLiveness(ctx, clusterName, actualURL, kubeconfigBase64)
+		if target.Online != nil && !*target.Online {
+			logger.Info("cluster liveness check failed", "cluster", clusterName)
+		}
+
 		clustersData[clusterName] = ClusterData{
 			ClusterName: clusterName,
 			ClusterAPI:  actualURL,
 			Kubeconfig:  kubeconfigBase64,
 		}
 
-		targetData = append(targetData, krknv1alpha1.ClusterTarget{
-			ClusterName:   clusterName,
-			ClusterAPIURL: actualURL,
-		})
+		targetData = append(targetData, target)
 	}
 
 	// Create secret with managed clusters data
@@ -341,6 +364,38 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// buildClusterTargetWithLiveness creates the target data returned by discovery
+// and records the result of checking the exact kubeconfig stored in the secret.
+func buildClusterTargetWithLiveness(
+	ctx context.Context,
+	clusterName, clusterAPIURL, kubeconfigBase64 string,
+) krknv1alpha1.ClusterTarget {
+	online := provider.CheckClusterLiveness(ctx, kubeconfigBase64, 0) == nil
+	checkedAt := metav1.Now()
+
+	return krknv1alpha1.ClusterTarget{
+		ClusterName:   clusterName,
+		ClusterAPIURL: clusterAPIURL,
+		Online:        &online,
+		CheckedAt:     &checkedAt,
+	}
+}
+
+// offlineClusterTarget creates target data for a cluster that could not be
+// prepared for a liveness check. The cluster remains discoverable and the
+// consumer can present it as unavailable.
+func offlineClusterTarget(clusterName, clusterAPIURL string) krknv1alpha1.ClusterTarget {
+	online := false
+	checkedAt := metav1.Now()
+
+	return krknv1alpha1.ClusterTarget{
+		ClusterName:   clusterName,
+		ClusterAPIURL: clusterAPIURL,
+		Online:        &online,
+		CheckedAt:     &checkedAt,
+	}
 }
 
 // getManagedClusters retrieves all managed clusters from ACM
