@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -176,6 +177,26 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if _, contributed := krknRequest.Status.TargetData[r.OperatorName]; contributed {
 		logger.Info("provider already contributed to krknTargetRequest, waiting for other providers",
 			"provider-name", r.OperatorName)
+
+		activeProviderCount := countActiveProviders(providerList)
+		contributorCount := len(krknRequest.Status.TargetData)
+		if shouldMarkAsCompleted(activeProviderCount, contributorCount) {
+			completedTime := metav1.Now()
+			krknRequest.Status.Status = StatusCompleted
+			krknRequest.Status.Completed = &completedTime
+			if err := r.Status().Update(ctx, krknRequest); err != nil {
+				if errors.IsConflict(err) {
+					logger.Info("conflict updating status, will retry", "UUID", krknRequest.Spec.UUID)
+					return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
+				}
+				return ctrl.Result{}, err
+			}
+			logger.Info("all active providers have contributed, marking as completed", "UUID", krknRequest.Spec.UUID)
+		}
+
+		if err := r.cleanupOldTargetRequests(ctx, logger); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -276,9 +297,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Check liveness with the same kubeconfig that will be returned to the
 		// consumer. Keep the target in the request even when the check fails so
 		// the CRD records the discovery result and the failure remains visible.
-		target := buildClusterTargetWithLiveness(ctx, clusterName, actualURL, kubeconfigBase64)
-		if target.Online != nil && !*target.Online {
-			logger.Info("cluster liveness check failed", "cluster", clusterName)
+		target, livenessErr := buildClusterTargetWithLiveness(ctx, clusterName, actualURL, kubeconfigBase64)
+		if livenessErr != nil {
+			logger.Error(livenessErr, "cluster liveness check failed", "cluster", clusterName)
 		}
 
 		clustersData[clusterName] = ClusterData{
@@ -344,7 +365,14 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	logger.Info("successfully updated krknTargetRequest", "UUID", krknRequest.Spec.UUID, "status", krknRequest.Status.Status)
 
-	// Cleanup old KrknTargetRequest resources
+	if err := r.cleanupOldTargetRequests(ctx, logger); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *KrknTargetRequestReconciler) cleanupOldTargetRequests(ctx context.Context, logger logr.Logger) error {
 	deletedCount, err := provider.CleanupOldResources(
 		ctx,
 		r.Client,
@@ -359,12 +387,13 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	)
 	if err != nil {
 		logger.Error(err, "failed to cleanup old KrknTargetRequest resources")
-		// Don't fail the reconciliation due to cleanup errors
-	} else if deletedCount > 0 {
+		return err
+	}
+	if deletedCount > 0 {
 		logger.Info("cleaned up old KrknTargetRequest resources", "count", deletedCount)
 	}
 
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // buildClusterTargetWithLiveness creates the target data returned by discovery
@@ -372,8 +401,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 func buildClusterTargetWithLiveness(
 	ctx context.Context,
 	clusterName, clusterAPIURL, kubeconfigBase64 string,
-) krknv1alpha1.ClusterTarget {
-	online := provider.CheckClusterLiveness(ctx, kubeconfigBase64, 0) == nil
+) (krknv1alpha1.ClusterTarget, error) {
+	livenessErr := provider.CheckClusterLiveness(ctx, kubeconfigBase64, 0)
+	online := livenessErr == nil
 	checkedAt := metav1.Now()
 
 	return krknv1alpha1.ClusterTarget{
@@ -381,7 +411,7 @@ func buildClusterTargetWithLiveness(
 		ClusterAPIURL: clusterAPIURL,
 		Online:        &online,
 		CheckedAt:     &checkedAt,
-	}
+	}, livenessErr
 }
 
 // offlineClusterTarget creates target data for a cluster that could not be
