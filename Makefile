@@ -81,12 +81,6 @@ endif
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 
-# PLATFORM optionally pins the target platform for container builds.
-PLATFORM ?=
-ifneq ($(strip $(PLATFORM)),)
-PLATFORM_ARG := --platform=$(PLATFORM)
-endif
-
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
@@ -190,7 +184,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build $(PLATFORM_ARG) -t ${IMG} .
+	$(CONTAINER_TOOL) build -t ${IMG} .
 ifeq ($(origin IMG)$(origin IMG_TAG)$(origin REGISTRY)$(origin IMG_NAME),filefilefilefile)
 ifneq ($(strip $(GIT_TAG)),)
 	$(CONTAINER_TOOL) tag ${IMG} $(REGISTRY)/$(IMG_NAME):$(GIT_TAG)
