@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -126,7 +127,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if err != nil {
 				if errors.IsConflict(err) {
 					logger.Info("conflict updating labels, will retry")
-					return ctrl.Result{Requeue: true}, nil
+					return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 				}
 				logger.Error(err, "failed to add UUID label")
 				return ctrl.Result{}, err
@@ -139,7 +140,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if err != nil {
 			if errors.IsConflict(err) {
 				logger.Info("conflict initializing status, will retry")
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 			}
 			logger.Error(err, "failed to initialize status")
 			return ctrl.Result{}, err
@@ -335,7 +336,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		if errors.IsConflict(err) {
 			logger.Info("conflict updating status, will retry", "UUID", krknRequest.Spec.UUID)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 		}
 		logger.Error(err, "failed to update KrknTargetRequest status")
 		return ctrl.Result{}, err

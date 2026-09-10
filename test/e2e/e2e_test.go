@@ -81,6 +81,12 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
+		By("scaling down the initial deployment before changing image pull policy")
+		cmd = exec.Command("kubectl", "scale", "deployment", "krkn-operator-acm-controller-manager",
+			"-n", namespace, "--replicas=0")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to scale down the initial deployment")
+
 		By("patching deployment to use IfNotPresent for locally loaded images")
 		cmd = exec.Command("kubectl", "patch", "deployment", "krkn-operator-acm-controller-manager",
 			"-n", namespace,
@@ -88,6 +94,12 @@ var _ = Describe("Manager", Ordered, func() {
 			"-p", `[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]`)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to patch imagePullPolicy")
+
+		By("scaling up the deployment with the locally loaded image")
+		cmd = exec.Command("kubectl", "scale", "deployment", "krkn-operator-acm-controller-manager",
+			"-n", namespace, "--replicas=1")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to scale up the deployment")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
