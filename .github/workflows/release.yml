@@ -162,7 +162,7 @@ jobs:
 
           kustomize_version=v5.6.0
           curl -fsSL \
-            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${kustomize_version}/kustomize_v${kustomize_version}_linux_amd64.tar.gz" \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${kustomize_version}/kustomize_${kustomize_version}_linux_amd64.tar.gz" \
             | tar -xz -C /tmp
           sudo install -m 0755 /tmp/kustomize /usr/local/bin/kustomize
 
