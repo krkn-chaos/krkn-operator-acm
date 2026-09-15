@@ -126,3 +126,66 @@ jobs:
             --title "Release $VERSION" \
             --generate-notes \
             --verify-tag
+
+  publish-olm-bundle:
+    name: Build and publish OLM bundle
+    needs: create-manifest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      REGISTRY: quay.io
+      IMAGE_NAMESPACE: krkn-chaos
+      BUNDLE_REPOSITORY: quay.io/krkn-chaos/krkn-operator-acm-bundle
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Install bundle tooling
+        run: |
+          operator_sdk_version=v1.41.1
+          curl -fsSL \
+            -o /tmp/operator-sdk \
+            "https://github.com/operator-framework/operator-sdk/releases/download/${operator_sdk_version}/operator-sdk_linux_amd64"
+          sudo install -m 0755 /tmp/operator-sdk /usr/local/bin/operator-sdk
+
+          kustomize_version=v5.6.0
+          curl -fsSL \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${kustomize_version}/kustomize_v${kustomize_version}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo install -m 0755 /tmp/kustomize /usr/local/bin/kustomize
+
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Render and publish bundle
+        env:
+          KUSTOMIZE: /usr/local/bin/kustomize
+        run: |
+          bundle_version="${RELEASE_TAG#v}"
+          export OPERATOR_IMAGE="$REGISTRY/$IMAGE_NAMESPACE/krkn-operator-acm:$RELEASE_TAG"
+          output_dir="dist/bundle"
+
+          chmod +x hack/olm/render-bundle.sh
+          hack/olm/render-bundle.sh "$bundle_version" "$output_dir"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file "$output_dir/bundle.Dockerfile" \
+            --tag "$BUNDLE_REPOSITORY:$RELEASE_TAG" \
+            --push \
+            "$output_dir"
+
+          docker buildx imagetools inspect "$BUNDLE_REPOSITORY:$RELEASE_TAG"
