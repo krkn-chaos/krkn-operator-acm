@@ -183,7 +183,7 @@ jobs:
 
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --file "$output_dir/bundle.Dockerfile" \
+            --file "$GITHUB_WORKSPACE/$output_dir/bundle.Dockerfile" \
             --tag "$BUNDLE_REPOSITORY:$RELEASE_TAG" \
             --push \
             "$output_dir"
