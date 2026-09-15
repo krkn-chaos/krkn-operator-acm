@@ -7,17 +7,25 @@ metadata:
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
   annotations:
-    categories: "Monitoring,Integration"
+    categories: "Monitoring,Integration & Delivery"
     description: "ACM integration for the Krkn chaos engineering platform."
     containerImage: quay.io/krkn-chaos/krkn-operator-acm:latest
+    repository: https://github.com/krkn-chaos/krkn-operator-acm
     support: krkn-chaos
 spec:
   displayName: Krkn Operator ACM
   capabilityLevel: Basic Install
   description: |
-    Krkn Operator ACM integrates Krkn with Open Cluster Management and
-    Advanced Cluster Management. It discovers managed clusters and publishes
-    target data for the Krkn Operator.
+    Krkn Operator ACM provides optional integration with both upstream Open
+    Cluster Management (OCM) and Red Hat Advanced Cluster Management (ACM).
+    It discovers managed clusters and publishes target data for the Krkn
+    Operator.
+
+    Tested upstream OCM versions are 1.1.0, 1.2.0, and 1.3.1. Tested Red Hat
+    ACM versions are 2.14, 2.15, and 2.16. For upstream OCM, the Managed
+    ServiceAccount add-on must be installed and available on the OCM hub before
+    enabling this integration. Follow the OCM Managed ServiceAccount
+    installation guide linked below.
 
     Install the Krkn Operator package first, or install this package through
     the same catalog and let OLM satisfy its dependency automatically.
@@ -31,9 +39,16 @@ spec:
     email: krkn-chaos@redhat.com
   links:
   - name: Krkn documentation
-    url: https://krkn-chaos.github.io/krkn-operator/
+    url: https://krkn-chaos.dev/docs/krkn-operator/compatibility/
+  - name: OCM Managed ServiceAccount installation
+    url: https://open-cluster-management.io/docs/getting-started/integration/managed-serviceaccount/
   - name: Krkn Operator ACM source code
     url: https://github.com/krkn-chaos/krkn-operator-acm
+  keywords:
+  - chaos engineering
+  - Open Cluster Management
+  - Advanced Cluster Management
+  - multi-cluster
   installModes:
   - type: OwnNamespace
     supported: true
