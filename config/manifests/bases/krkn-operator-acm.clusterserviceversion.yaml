@@ -1,0 +1,62 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: krkn-operator-acm.v0.0.0
+  labels:
+    operatorframework.io/arch.amd64: supported
+    operatorframework.io/arch.arm64: supported
+    operatorframework.io/os.linux: supported
+  annotations:
+    categories: "Monitoring,Integration"
+    description: "ACM integration for the Krkn chaos engineering platform."
+    containerImage: quay.io/krkn-chaos/krkn-operator-acm:latest
+    support: krkn-chaos
+spec:
+  displayName: Krkn Operator ACM
+  capabilityLevel: Basic Install
+  description: |
+    Krkn Operator ACM integrates Krkn with Open Cluster Management and
+    Advanced Cluster Management. It discovers managed clusters and publishes
+    target data for the Krkn Operator.
+
+    Install the Krkn Operator package first, or install this package through
+    the same catalog and let OLM satisfy its dependency automatically.
+  minKubeVersion: 1.19.0
+  version: 0.0.0
+  maturity: alpha
+  provider:
+    name: krkn-chaos
+  maintainers:
+  - name: krkn-chaos
+    email: krkn-chaos@redhat.com
+  links:
+  - name: Krkn documentation
+    url: https://krkn-chaos.github.io/krkn-operator/
+  - name: Krkn Operator ACM source code
+    url: https://github.com/krkn-chaos/krkn-operator-acm
+  installModes:
+  - type: OwnNamespace
+    supported: true
+  - type: SingleNamespace
+    supported: true
+  - type: MultiNamespace
+    supported: false
+  - type: AllNamespaces
+    supported: false
+  customResourceDefinitions:
+    required:
+    - name: krkntargetrequests.krkn.krkn-chaos.dev
+      version: v1alpha1
+      kind: KrknTargetRequest
+      displayName: Krkn Target Request
+      description: Target request shared with the Krkn Operator.
+    - name: krknoperatortargetproviders.krkn.krkn-chaos.dev
+      version: v1alpha1
+      kind: KrknOperatorTargetProvider
+      displayName: Krkn Operator Target Provider
+      description: Provider registration shared with the Krkn Operator.
+    - name: krknoperatortargetproviderconfigs.krkn.krkn-chaos.dev
+      version: v1alpha1
+      kind: KrknOperatorTargetProviderConfig
+      displayName: Krkn Operator Target Provider Config
+      description: Provider configuration shared with the Krkn Operator.
