@@ -15,10 +15,19 @@ output_dir=$2
   exit 2
 }
 
-command -v operator-sdk >/dev/null || { echo "operator-sdk is required" >&2; exit 1; }
 command -v yq >/dev/null || { echo "yq is required" >&2; exit 1; }
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+operator_sdk=${OPERATOR_SDK:-operator-sdk}
+if command -v "$operator_sdk" >/dev/null 2>&1; then
+  operator_sdk=$(command -v "$operator_sdk")
+else
+  operator_sdk="$repo_root/bin/operator-sdk"
+fi
+[[ -x "$operator_sdk" ]] || { echo "operator-sdk is required" >&2; exit 1; }
+kustomize=${KUSTOMIZE:-$repo_root/bin/kustomize-v5.6.0}
+[[ -x "$kustomize" ]] || { echo "kustomize is required" >&2; exit 1; }
+
 output_parent=$(dirname "$output_dir")
 mkdir -p "$output_parent"
 output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
@@ -36,8 +45,8 @@ mkdir -p "$output_dir"
 
 (
   cd "$work_dir"
-  "$repo_root/bin/kustomize-v5.6.0" build "$repo_root/config/manifests" |
-    operator-sdk generate bundle \
+  "$kustomize" build "$repo_root/config/manifests" |
+    "$operator_sdk" generate bundle \
       --kustomize-dir "$repo_root/config/manifests" \
       --output-dir "$output_dir" \
       --package krkn-operator-acm \
@@ -61,4 +70,4 @@ yq -i \
   "$csv_file"
 
 cp "$repo_root/config/manifests/dependencies.yaml" "$output_dir/metadata/dependencies.yaml"
-operator-sdk bundle validate "$output_dir"
+"$operator_sdk" bundle validate "$output_dir"
