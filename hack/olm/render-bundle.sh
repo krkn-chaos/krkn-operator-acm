@@ -40,6 +40,7 @@ icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/krkn-operator-acm-olm.XXXXXX")
+icon_base64_file="$work_dir/icon.base64"
 trap 'rm -rf "$work_dir"' EXIT
 
 rm -rf "$output_dir"
@@ -63,13 +64,13 @@ mkdir -p "$output_dir"
 csv_file="$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
 export OPERATOR_IMAGE="$operator_image"
 export MIN_KUBE_VERSION="$min_kube_version"
-export ICON_BASE64
-ICON_BASE64=$(base64 < "$icon_file" | tr -d '\n')
+base64 < "$icon_file" | tr -d '\n' > "$icon_base64_file"
+export ICON_BASE64_FILE="$icon_base64_file"
 
 yq -i \
   '.metadata.annotations.containerImage = strenv(OPERATOR_IMAGE) |
    .spec.minKubeVersion = strenv(MIN_KUBE_VERSION) |
-   .spec.icon = [{"base64data": strenv(ICON_BASE64), "mediatype": "image/png"}] |
+   .spec.icon = [{"base64data": load_str(strenv(ICON_BASE64_FILE)), "mediatype": "image/png"}] |
    (.spec.install.spec.deployments[] | select(.name == "krkn-operator-acm-controller-manager") | .spec.template.spec.containers[] | select(.name == "manager") | .image) = strenv(OPERATOR_IMAGE) |
    .spec.relatedImages = [{"name": "krkn-operator-acm", "image": strenv(OPERATOR_IMAGE)}]' \
   "$csv_file"
