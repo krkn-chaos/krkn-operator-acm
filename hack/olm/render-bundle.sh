@@ -37,6 +37,10 @@ output_parent=$(dirname "$output_dir")
 mkdir -p "$output_parent"
 output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 [[ "$output_dir" != "$repo_root" ]] || { echo "refusing to use repository root as output" >&2; exit 2; }
+[[ ! -e "$output_dir" && ! -L "$output_dir" ]] || {
+  echo "output-dir must not already exist: $output_dir" >&2
+  exit 2
+}
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
 min_kube_version=${MIN_KUBE_VERSION:-1.36.0}
@@ -48,7 +52,6 @@ work_dir=$(mktemp -d "${TMPDIR:-/tmp}/krkn-operator-acm-olm.XXXXXX")
 icon_base64_file="$work_dir/icon.base64"
 trap 'rm -rf "$work_dir"' EXIT
 
-rm -rf "$output_dir"
 mkdir -p "$output_dir"
 
 (
