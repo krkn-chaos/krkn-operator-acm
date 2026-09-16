@@ -10,6 +10,11 @@ usage() {
 version=$1
 output_dir=$2
 
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+  echo "version must be a semantic version (for example 1.1.0 or 1.1.0-beta.1)" >&2
+  exit 2
+}
+
 [[ -n "$output_dir" && "$output_dir" != "/" && "$output_dir" != "." && "$output_dir" != ".." ]] || {
   echo "output-dir must be a non-protected path" >&2
   exit 2
