@@ -7,6 +7,7 @@ This guide covers deployment scenarios for krkn-operator-acm, including single-o
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [OperatorHub / OLM Deployment](#operatorhub--olm-deployment)
 - [Single Operator Deployment](#single-operator-deployment)
 - [Multi-Operator Deployment](#multi-operator-deployment)
 - [Configuration](#configuration)
@@ -22,6 +23,32 @@ This guide covers deployment scenarios for krkn-operator-acm, including single-o
 - Cluster with managed clusters registered in ACM
 - Each managed cluster must have an `application-manager` secret in its namespace
 - Go 1.24.0+ and Docker 17.03+ (if building from source)
+
+## OperatorHub / OLM Deployment
+
+The published ACM integration uses the `krkn-operator-acm` package and the
+`stable-acm` channel. Its CSV declares a dependency on the `krkn-operator`
+package (`>=1.1.0-beta.1`), so OLM can resolve the core operator when both
+packages are available from the same Krkn catalog.
+
+In OpenShift, open **Administrator → Operators → OperatorHub**, search for
+**Krkn**, and install:
+
+1. **Krkn Operator** using `stable-ocp`;
+2. **Krkn Operator ACM** using `stable-acm`.
+
+On a Kubernetes cluster with OLM, install the same packages from the Krkn
+catalog using `stable-kubernetes` for the core package and `stable-acm` for the
+ACM integration. The ACM operator is namespace-scoped; choose the namespace in
+which the shared Krkn custom resources are managed. OLM injects the actual
+namespace and ServiceAccount identity into the ACM deployment, so custom
+namespaces are supported.
+
+The ACM bundle does not create an Ingress, Route, or Gateway. Publish any
+console or API Service separately according to the cluster's TLS and networking
+policy. For upstream OCM, install the [Managed ServiceAccount add-on](https://open-cluster-management.io/docs/getting-started/integration/managed-serviceaccount/)
+on the OCM hub before using the integration. Compatibility versions are listed
+in the [Krkn compatibility matrix](https://krkn-chaos.dev/docs/krkn-operator/compatibility/).
 
 ## Single Operator Deployment
 
