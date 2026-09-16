@@ -38,6 +38,15 @@ jobs:
       - name: Set up envtest binaries
         run: make setup-envtest
 
+      - name: Install OLM bundle tooling
+        run: |
+          tool_dir="$RUNNER_TEMP/krkn-acm-olm-tools"
+          bash hack/olm/install-tools.sh "$tool_dir"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+
+      - name: Validate OLM bundle renderer
+        run: bash hack/olm/test-render-bundle.sh
+
       - name: Run tests
         run: |
           go mod tidy
