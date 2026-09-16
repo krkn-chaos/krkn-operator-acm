@@ -46,7 +46,7 @@ output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 }
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
-min_kube_version=${MIN_KUBE_VERSION:-1.36.0}
+min_kube_version=${MIN_KUBE_VERSION:-1.19.0}
 channel=${CHANNEL:-stable-acm}
 icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
