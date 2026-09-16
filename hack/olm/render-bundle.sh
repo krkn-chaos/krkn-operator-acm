@@ -34,7 +34,7 @@ output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 [[ "$output_dir" != "$repo_root" ]] || { echo "refusing to use repository root as output" >&2; exit 2; }
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
-min_kube_version=${MIN_KUBE_VERSION:-1.19.0}
+min_kube_version=${MIN_KUBE_VERSION:-1.36.0}
 channel=${CHANNEL:-stable-acm}
 icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
@@ -90,6 +90,24 @@ yq -i \
    (.spec.install.spec.deployments[] | select(.name == "krkn-operator-acm-controller-manager") | .spec.template.spec.containers[] | select(.name == "manager") | .image) = strenv(OPERATOR_IMAGE) |
    .spec.relatedImages = [{"name": "krkn-operator-acm", "image": strenv(OPERATOR_IMAGE)}]' \
   "$csv_file"
+
+yq -e '.spec.minKubeVersion == strenv(MIN_KUBE_VERSION)' "$csv_file" >/dev/null
+yq -e '
+  .spec.install.spec.deployments[]
+  | select(.name == "krkn-operator-acm-controller-manager")
+  | .spec.template.spec.containers[]
+  | select(.name == "manager")
+  | .env[]
+  | select(.name == "POD_NAMESPACE" and .valueFrom.fieldRef.fieldPath == "metadata.namespace")
+' "$csv_file" >/dev/null
+yq -e '
+  .spec.install.spec.deployments[]
+  | select(.name == "krkn-operator-acm-controller-manager")
+  | .spec.template.spec.containers[]
+  | select(.name == "manager")
+  | .env[]
+  | select(.name == "SERVICE_ACCOUNT_NAME" and .valueFrom.fieldRef.fieldPath == "spec.serviceAccountName")
+' "$csv_file" >/dev/null
 
 cp "$repo_root/config/manifests/dependencies.yaml" "$output_dir/metadata/dependencies.yaml"
 "$operator_sdk" bundle validate "$output_dir"
