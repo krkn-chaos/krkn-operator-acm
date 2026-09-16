@@ -31,6 +31,9 @@ else
 fi
 [[ -x "$operator_sdk" ]] || { echo "operator-sdk is required" >&2; exit 1; }
 kustomize=${KUSTOMIZE:-$repo_root/bin/kustomize-v5.6.0}
+if command -v "$kustomize" >/dev/null 2>&1; then
+  kustomize=$(command -v "$kustomize")
+fi
 [[ -x "$kustomize" ]] || { echo "kustomize is required" >&2; exit 1; }
 
 output_parent=$(dirname "$output_dir")
