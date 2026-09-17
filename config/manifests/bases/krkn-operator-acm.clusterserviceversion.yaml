@@ -9,6 +9,7 @@ metadata:
   annotations:
     capabilities: Basic Install
     categories: "Monitoring,Integration & Delivery"
+    com.redhat.openshift.versions: v4.19-v4.20
     description: "ACM integration for the Krkn chaos engineering platform."
     containerImage: quay.io/krkn-chaos/krkn-operator-acm:latest
     repository: https://github.com/krkn-chaos/krkn-operator-acm
