@@ -91,7 +91,7 @@ EOF
 csv_file="$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
 export OPERATOR_IMAGE="$operator_image"
 export MIN_KUBE_VERSION="$min_kube_version"
-base64 < "$icon_file" | tr -d '\n' > "$icon_base64_file"
+base64 < "$icon_file" | tr -d '\n' | fold -w 76 > "$icon_base64_file"
 export ICON_BASE64_FILE="$icon_base64_file"
 
 yq -i \
@@ -121,4 +121,21 @@ yq -e '
 ' "$csv_file" >/dev/null
 
 cp "$repo_root/config/manifests/dependencies.yaml" "$output_dir/metadata/dependencies.yaml"
+
+# Keep generated YAML readable and compatible with the catalog linter. Large
+# JSON annotations, CRD descriptions, and inline icon data are emitted as
+# literal block scalars; explicit document markers make every file standalone
+# YAML for yamllint.
+while IFS= read -r yaml_file; do
+  yq -i '(... | select(tag == "!!str" and length > 180)) style="literal"' "$yaml_file"
+  if [[ "$(head -n 1 "$yaml_file")" != "---" ]]; then
+    normalized_file="$yaml_file.normalized"
+    {
+      printf '%s\n' '---'
+      cat "$yaml_file"
+    } > "$normalized_file"
+    mv "$normalized_file" "$yaml_file"
+  fi
+done < <(find "$output_dir" -type f -name '*.yaml' -print)
+
 "$operator_sdk" bundle validate "$output_dir"

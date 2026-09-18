@@ -25,5 +25,14 @@ output_dir="$test_root/bundle"
 "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$output_dir"
 test -s "$output_dir/bundle.Dockerfile"
 test -s "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
+while IFS= read -r yaml_file; do
+  test "$(head -n 1 "$yaml_file")" = "---"
+  if awk 'length($0) > 180 { exit 1 }' "$yaml_file"; then
+    :
+  else
+    echo "YAML line exceeds 180 characters: $yaml_file" >&2
+    exit 1
+  fi
+done < <(find "$output_dir" -type f -name '*.yaml' -print)
 
 echo "OLM renderer checks passed"
