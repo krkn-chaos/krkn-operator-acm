@@ -25,6 +25,7 @@ output_dir="$test_root/bundle"
 "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$output_dir"
 test -s "$output_dir/bundle.Dockerfile"
 test -s "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
+test "$(yq -r '.annotations."com.redhat.openshift.versions"' "$output_dir/metadata/annotations.yaml")" = "v4.19-v4.20"
 while IFS= read -r yaml_file; do
   test "$(head -n 1 "$yaml_file")" = "---"
   if awk 'length($0) > 180 { exit 1 }' "$yaml_file"; then

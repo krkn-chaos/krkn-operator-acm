@@ -47,6 +47,7 @@ output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
 min_kube_version=${MIN_KUBE_VERSION:-1.19.0}
+openshift_versions=${OPENSHIFT_VERSIONS:-v4.19-v4.20}
 channel=${CHANNEL:-stable-acm}
 icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
@@ -91,6 +92,7 @@ EOF
 csv_file="$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
 export OPERATOR_IMAGE="$operator_image"
 export MIN_KUBE_VERSION="$min_kube_version"
+export OPENSHIFT_VERSIONS="$openshift_versions"
 base64 < "$icon_file" | tr -d '\n' | fold -w 76 > "$icon_base64_file"
 export ICON_BASE64_FILE="$icon_base64_file"
 
@@ -121,6 +123,8 @@ yq -e '
 ' "$csv_file" >/dev/null
 
 cp "$repo_root/config/manifests/dependencies.yaml" "$output_dir/metadata/dependencies.yaml"
+yq -i '.annotations."com.redhat.openshift.versions" = strenv(OPENSHIFT_VERSIONS)' \
+  "$output_dir/metadata/annotations.yaml"
 
 # Keep generated YAML readable and compatible with the catalog linter. Large
 # JSON annotations, CRD descriptions, and inline icon data are emitted as
