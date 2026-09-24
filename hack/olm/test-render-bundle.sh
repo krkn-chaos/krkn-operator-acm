@@ -22,9 +22,12 @@ fi
 grep -Fxq 'preserve me' "$sentinel_dir/sentinel"
 
 output_dir="$test_root/bundle"
-"$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$output_dir"
+expected_openshift_versions=v4.20-v4.22
+OPENSHIFT_VERSIONS="$expected_openshift_versions" \
+  "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$output_dir"
 test -s "$output_dir/bundle.Dockerfile"
 test -s "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
-test "$(yq -r '.annotations."com.redhat.openshift.versions"' "$output_dir/metadata/annotations.yaml")" = "v4.19-v4.22"
+test "$(yq -r '.annotations."com.redhat.openshift.versions"' "$output_dir/metadata/annotations.yaml")" = "$expected_openshift_versions"
+test "$(yq -r '.metadata.annotations."com.redhat.openshift.versions"' "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml")" = "$expected_openshift_versions"
 
 echo "OLM renderer checks passed"

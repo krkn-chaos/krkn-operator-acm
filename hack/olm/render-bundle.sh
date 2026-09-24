@@ -98,6 +98,7 @@ export ICON_BASE64_FILE="$icon_base64_file"
 
 yq -i \
   '.metadata.annotations.containerImage = strenv(OPERATOR_IMAGE) |
+   .metadata.annotations."com.redhat.openshift.versions" = strenv(OPENSHIFT_VERSIONS) |
    .spec.minKubeVersion = strenv(MIN_KUBE_VERSION) |
    .spec.icon = [{"base64data": load_str(strenv(ICON_BASE64_FILE)), "mediatype": "image/png"}] |
    (.spec.install.spec.deployments[] | select(.name == "krkn-operator-acm-controller-manager") | .spec.template.spec.containers[] | select(.name == "manager") | .image) = strenv(OPERATOR_IMAGE) |
