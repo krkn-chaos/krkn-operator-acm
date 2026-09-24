@@ -47,7 +47,7 @@ output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
 min_kube_version=${MIN_KUBE_VERSION:-1.19.0}
-openshift_versions=${OPENSHIFT_VERSIONS:-v4.19-v4.20}
+openshift_versions=${OPENSHIFT_VERSIONS:-v4.19-v4.22}
 channel=${CHANNEL:-stable-acm}
 icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
@@ -98,6 +98,7 @@ export ICON_BASE64_FILE="$icon_base64_file"
 
 yq -i \
   '.metadata.annotations.containerImage = strenv(OPERATOR_IMAGE) |
+   .metadata.annotations."com.redhat.openshift.versions" = strenv(OPENSHIFT_VERSIONS) |
    .spec.minKubeVersion = strenv(MIN_KUBE_VERSION) |
    .spec.icon = [{"base64data": load_str(strenv(ICON_BASE64_FILE)), "mediatype": "image/png"}] |
    (.spec.install.spec.deployments[] | select(.name == "krkn-operator-acm-controller-manager") | .spec.template.spec.containers[] | select(.name == "manager") | .image) = strenv(OPERATOR_IMAGE) |
@@ -141,5 +142,4 @@ while IFS= read -r yaml_file; do
     mv "$normalized_file" "$yaml_file"
   fi
 done < <(find "$output_dir" -type f -name '*.yaml' -print)
-
 "$operator_sdk" bundle validate "$output_dir"
