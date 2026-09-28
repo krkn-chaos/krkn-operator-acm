@@ -20,13 +20,20 @@ if "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$sentinel_dir" >/dev/nul
   exit 1
 fi
 grep -Fxq 'preserve me' "$sentinel_dir/sentinel"
+if CHANNEL=stable-acm "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$sentinel_dir" >/dev/null 2>&1; then
+  echo "renderer accepted a channel override from another release line" >&2
+  exit 1
+fi
 
 output_dir="$test_root/bundle"
 expected_openshift_versions=v4.20-v4.22
 OPENSHIFT_VERSIONS="$expected_openshift_versions" \
   "$repo_root/hack/olm/render-bundle.sh" 1.1.0-beta.1 "$output_dir"
 test -s "$output_dir/bundle.Dockerfile"
-test -s "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
+csv_file="$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml"
+test -s "$csv_file"
+yq -e '.annotations."operators.operatorframework.io.bundle.channels.v1" == "stable-acm-1.1"' "$output_dir/metadata/annotations.yaml" >/dev/null
+grep -Fq 'operators.operatorframework.io.bundle.channels.v1="stable-acm-1.1"' "$output_dir/bundle.Dockerfile"
 test "$(yq -r '.annotations."com.redhat.openshift.versions"' "$output_dir/metadata/annotations.yaml")" = "$expected_openshift_versions"
 test "$(yq -r '.metadata.annotations."com.redhat.openshift.versions"' "$output_dir/manifests/krkn-operator-acm.clusterserviceversion.yaml")" = "$expected_openshift_versions"
 while IFS= read -r yaml_file; do
@@ -38,5 +45,10 @@ while IFS= read -r yaml_file; do
     exit 1
   fi
 done < <(find "$output_dir" -type f -name '*.yaml' -print)
+
+legacy_output="$test_root/legacy-bundle"
+"$repo_root/hack/olm/render-bundle.sh" 1.0.8 "$legacy_output"
+legacy_csv="$legacy_output/manifests/krkn-operator-acm.clusterserviceversion.yaml"
+yq -e '.annotations."operators.operatorframework.io.bundle.channels.v1" == "stable-acm"' "$legacy_output/metadata/annotations.yaml" >/dev/null
 
 echo "OLM renderer checks passed"

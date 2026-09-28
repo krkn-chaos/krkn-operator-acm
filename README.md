@@ -19,8 +19,10 @@ both packages are available in the same catalog.
 
 Install the packages through OperatorHub using these channels:
 
-- `krkn-operator`: `stable-kubernetes` on Kubernetes or `stable-ocp` on OpenShift;
-- `krkn-operator-acm`: `stable-acm`.
+- `krkn-operator`: `stable-kubernetes`/`stable-ocp` for `1.0.x`, or versioned
+  channels such as `stable-kubernetes-1.1`/`stable-ocp-1.1` for later lines;
+- `krkn-operator-acm`: `stable-acm` for `1.0.x`, or a versioned channel such as
+  `stable-acm-1.1` for later release lines.
 
 Install the core package first, or select the ACM package and let OLM resolve
 its `krkn-operator` dependency. The ACM operator supports its own namespace
@@ -43,9 +45,11 @@ these GitHub Actions organization-level settings before using the workflow:
   configured fork and open pull requests against the upstream catalog.
 
 The token value must only be stored as a GitHub Actions secret. The workflow
-calculates the previous head of the `stable-acm` channel, writes the matching
-`replaces` value, propagates the bundle icon to the catalog package metadata,
-and creates or updates the catalog pull request.
+selects the channel from the release line, creates a missing versioned channel,
+and calculates `replaces` only from that channel. The first bundle in a new
+channel has no `replaces`; later bundles write the matching predecessor. The
+workflow also propagates the bundle icon to the catalog package metadata and
+creates or updates the catalog pull request.
 
 ## License
 
