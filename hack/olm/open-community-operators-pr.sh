@@ -2,15 +2,49 @@
 
 set -euo pipefail
 
+package_name=krkn-operator-acm
+channel_name=stable-acm
+
+validate_fork() {
+  local fork=$1
+  [[ "$fork" =~ ^[^/]+/[^/]+$ ]] || {
+    echo "COMMUNITY_OPERATORS_FORK must have the form <owner>/<repository>" >&2
+    return 2
+  }
+}
+
+update_catalog_icon() {
+  local catalog_template=$1
+  local csv_file=$2
+  local package_name=$3
+  local icon_base64 icon_mediatype package_entries
+
+  icon_base64=$(yq -r '.spec.icon[0].base64data // ""' "$csv_file")
+  icon_mediatype=$(yq -r '.spec.icon[0].mediatype // ""' "$csv_file")
+  [[ -n "$icon_base64" && -n "$icon_mediatype" ]] || {
+    echo "bundle CSV icon is missing" >&2
+    return 1
+  }
+  export ICON_BASE64="$icon_base64" ICON_MEDIATYPE="$icon_mediatype" OLM_PACKAGE_NAME="$package_name"
+  package_entries=$(yq -r \
+    '.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .name' \
+    "$catalog_template" | wc -l | tr -d ' ')
+  [[ "$package_entries" == 1 ]] || {
+    echo "expected one package entry, found $package_entries" >&2
+    return 1
+  }
+  yq -i \
+    '(.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .icon) = {"base64data": strenv(ICON_BASE64), "mediatype": strenv(ICON_MEDIATYPE)}' \
+    "$catalog_template"
+}
+
+main() {
 [[ $# -eq 2 ]] || {
   echo "usage: $0 <version> <rendered-bundle>" >&2
   exit 2
 }
 version=$1
 bundle_dir=$2
-package_name=krkn-operator-acm
-channel_name=stable-acm
-
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]] || {
   echo "invalid release version: $version" >&2
   exit 2
@@ -21,6 +55,7 @@ channel_name=stable-acm
 }
 : "${COMMUNITY_OPERATORS_FORK:?COMMUNITY_OPERATORS_FORK must be configured}"
 : "${GH_TOKEN:?GH_TOKEN must be configured with permission to push to the fork and open upstream PRs}"
+validate_fork "$COMMUNITY_OPERATORS_FORK"
 
 git config --global user.name "github-actions[bot]"
 git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -28,10 +63,6 @@ gh auth setup-git
 
 catalog_repository=${COMMUNITY_OPERATORS_REPOSITORY:-redhat-openshift-ecosystem/community-operators-prod}
 fork_owner=${COMMUNITY_OPERATORS_FORK%%/*}
-[[ "$COMMUNITY_OPERATORS_FORK" == */* && -n "$fork_owner" ]] || {
-  echo "COMMUNITY_OPERATORS_FORK must have the form <owner>/<repository>" >&2
-  exit 2
-}
 
 work_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/community-operators.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT
@@ -63,18 +94,7 @@ cp -R "$bundle_dir/manifests" "$version_dir/manifests"
 cp -R "$bundle_dir/metadata" "$version_dir/metadata"
 csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
 [[ -n "$csv_file" ]] || { echo "bundle CSV not found" >&2; exit 1; }
-icon_base64=$(yq -r '.spec.icon[0].base64data // ""' "$csv_file")
-icon_mediatype=$(yq -r '.spec.icon[0].mediatype // ""' "$csv_file")
-[[ -n "$icon_base64" && -n "$icon_mediatype" ]] || { echo "bundle CSV icon is missing" >&2; exit 1; }
-export ICON_BASE64="$icon_base64" ICON_MEDIATYPE="$icon_mediatype" OLM_PACKAGE_NAME="$package_name"
-
-package_entries=$(yq -r \
-  '.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .name' \
-  "$catalog_template" | wc -l | tr -d ' ')
-[[ "$package_entries" == 1 ]] || { echo "expected one package entry, found $package_entries" >&2; exit 1; }
-yq -i \
-  '(.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .icon) = {"base64data": strenv(ICON_BASE64), "mediatype": strenv(ICON_MEDIATYPE)}' \
-  "$catalog_template"
+update_catalog_icon "$catalog_template" "$csv_file" "$package_name"
 
 cat > "$version_dir/release-config.yaml" <<EOF
 ---
@@ -112,3 +132,8 @@ replacing $previous_bundle.
 EOF
 gh pr create --repo "$catalog_repository" --head "$fork_owner:automation/$package_name-$version" \
   --base main --title "operator $package_name ($version)" --body-file "$body_file"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -47,6 +47,9 @@ jobs:
       - name: Test catalog channel head selection
         run: bash hack/olm/test-channel-head.sh
 
+      - name: Test catalog submission helpers
+        run: bash hack/olm/test-open-community-operators-pr.sh
+
       - name: Validate OLM bundle renderer
         run: bash hack/olm/test-render-bundle.sh
 

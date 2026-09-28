@@ -31,6 +31,22 @@ For upstream OCM, install the Managed ServiceAccount add-on on the OCM hub
 before enabling the ACM integration. Red Hat ACM and upstream OCM compatibility
 is documented in the [compatibility matrix](https://krkn-chaos.dev/docs/krkn-operator/compatibility/).
 
+## Catalog release automation
+
+The release workflow automatically submits the rendered OLM bundle to the
+`community-operators-prod` catalog after a version tag is published. Configure
+these GitHub Actions organization-level settings before using the workflow:
+
+- `COMMUNITY_OPERATORS_FORK`: repository variable containing the fork in the
+  `<owner>/community-operators-prod` format;
+- `COMMUNITY_OPERATORS_TOKEN`: secret containing a token that can push to the
+  configured fork and open pull requests against the upstream catalog.
+
+The token value must only be stored as a GitHub Actions secret. The workflow
+calculates the previous head of the `stable-acm` channel, writes the matching
+`replaces` value, propagates the bundle icon to the catalog package metadata,
+and creates or updates the catalog pull request.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
