@@ -6,6 +6,14 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=open-community-operators-pr.sh
 source "$script_dir/open-community-operators-pr.sh"
 
+[[ "$(release_channel_for_version stable-acm 1.0.8)" == stable-acm ]]
+[[ "$(release_channel_for_version stable-acm 1.1.0-rc.2)" == stable-acm-1.1 ]]
+
+if release_channel_for_version stable-acm bad-version >/dev/null 2>&1; then
+  echo "invalid release version was accepted" >&2
+  exit 1
+fi
+
 validate_fork "owner/community-operators-prod"
 if validate_fork "owner/" >/dev/null 2>&1 || validate_fork "/community-operators-prod" >/dev/null 2>&1; then
   echo "malformed fork coordinates were accepted" >&2
@@ -17,6 +25,12 @@ trap 'rm -rf "$test_dir"' EXIT
 catalog_template="$test_dir/basic.yaml"
 csv_file="$test_dir/bundle.clusterserviceversion.yaml"
 cp "$script_dir/testdata/catalog-template-basic.yaml" "$catalog_template"
+ensure_catalog_channel "$catalog_template" krkn-operator-acm stable-acm-1.1
+channel_entries=$(yq -r '[.entries[] | select(.schema == "olm.channel" and .name == "stable-acm-1.1") | .entries[]] | length' "$catalog_template")
+[[ "$channel_entries" == 0 ]] || {
+  echo "new release channel was not created empty" >&2
+  exit 1
+}
 printf '%s\n' \
   'spec:' \
   '  icon:' >"$csv_file"

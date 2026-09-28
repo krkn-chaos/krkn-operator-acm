@@ -19,8 +19,10 @@ both packages are available in the same catalog.
 
 Install the packages through OperatorHub using these channels:
 
-- `krkn-operator`: `stable-kubernetes` on Kubernetes or `stable-ocp` on OpenShift;
-- `krkn-operator-acm`: `stable-acm`.
+- `krkn-operator`: `stable-kubernetes`/`stable-ocp` for `1.0.x`, or versioned
+  channels such as `stable-kubernetes-1.1`/`stable-ocp-1.1` for later lines;
+- `krkn-operator-acm`: `stable-acm` for `1.0.x`, or a versioned channel such as
+  `stable-acm-1.1` for later release lines.
 
 Install the core package first, or select the ACM package and let OLM resolve
 its `krkn-operator` dependency. The ACM operator supports its own namespace

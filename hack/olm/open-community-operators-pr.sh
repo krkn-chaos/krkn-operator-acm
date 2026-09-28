@@ -3,7 +3,32 @@
 set -euo pipefail
 
 package_name=krkn-operator-acm
-channel_name=stable-acm
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source "$script_dir/release-channel.sh"
+
+ensure_catalog_channel() {
+  local catalog_template=$1
+  local package_name=$2
+  local channel_name=$3
+  local channel_count
+
+  export OLM_PACKAGE_NAME="$package_name" OLM_CHANNEL_NAME="$channel_name"
+  channel_count=$(yq -r '[.entries[] | select(.schema == "olm.channel" and .package == strenv(OLM_PACKAGE_NAME) and .name == strenv(OLM_CHANNEL_NAME))] | length' "$catalog_template")
+  if [[ "$channel_count" == 0 ]]; then
+    yq -i '.entries += [{"entries": [], "name": strenv(OLM_CHANNEL_NAME), "package": strenv(OLM_PACKAGE_NAME), "schema": "olm.channel"}]' "$catalog_template"
+  elif [[ "$channel_count" != 1 ]]; then
+    echo "expected at most one $package_name/$channel_name channel entry, found $channel_count" >&2
+    return 1
+  fi
+}
+
+channel_has_entries() {
+  local catalog_template=$1
+  local package_name=$2
+  local channel_name=$3
+  export OLM_PACKAGE_NAME="$package_name" OLM_CHANNEL_NAME="$channel_name"
+  [[ "$(yq -r '[.entries[] | select(.schema == "olm.channel" and .package == strenv(OLM_PACKAGE_NAME) and .name == strenv(OLM_CHANNEL_NAME) and (.entries | length > 0))] | length' "$catalog_template")" == 1 ]]
+}
 
 validate_fork() {
   local fork=$1
@@ -48,6 +73,7 @@ main() {
 }
 version=$1
 bundle_dir=$2
+channel_name=$(release_channel_for_version stable-acm "$version")
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]] || {
   echo "invalid release version: $version" >&2
   exit 2
@@ -84,13 +110,16 @@ version_dir="$package_dir/$version"
 catalog_template="$package_dir/catalog-templates/basic.yaml"
 [[ ! -e "$version_dir" ]] || { echo "catalog version already exists: $version" >&2; exit 1; }
 [[ -f "$catalog_template" ]] || { echo "catalog template not found: $catalog_template" >&2; exit 1; }
+ensure_catalog_channel "$catalog_template" "$package_name" "$channel_name"
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-previous_bundle=$(bash "$script_dir/channel-head.sh" "$catalog_template" "$package_name" "$channel_name")
-[[ "$previous_bundle" =~ ^$package_name\.v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]] || {
-  echo "unable to determine the previous $channel_name bundle: $previous_bundle" >&2
-  exit 1
-}
+previous_bundle=""
+if channel_has_entries "$catalog_template" "$package_name" "$channel_name"; then
+  previous_bundle=$(bash "$script_dir/channel-head.sh" "$catalog_template" "$package_name" "$channel_name")
+  [[ "$previous_bundle" =~ ^$package_name\.v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]] || {
+    echo "unable to determine the previous $channel_name bundle: $previous_bundle" >&2
+    exit 1
+  }
+fi
 
 mkdir -p "$version_dir"
 cp -R "$bundle_dir/manifests" "$version_dir/manifests"
@@ -105,8 +134,10 @@ catalog_templates:
   - template_name: basic.yaml
     channels:
       - $channel_name
-    replaces: $previous_bundle
 EOF
+if [[ -n "$previous_bundle" ]]; then
+  printf '    replaces: %s\n' "$previous_bundle" >>"$version_dir/release-config.yaml"
+fi
 
 git -C "$work_dir/catalog" add "operators/$package_name/$version" "$catalog_template"
 git -C "$work_dir/catalog" commit -m "operator: update $package_name bundle to $version"
