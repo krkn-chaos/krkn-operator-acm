@@ -19,15 +19,23 @@ csv_file="$test_dir/bundle.clusterserviceversion.yaml"
 cp "$script_dir/testdata/catalog-template-basic.yaml" "$catalog_template"
 printf '%s\n' \
   'spec:' \
-  '  icon:' \
-  '    - base64data: dGVzdC1pY29u' \
-  '      mediatype: image/png' >"$csv_file"
+  '  icon:' >"$csv_file"
+printf '%s\n' '    - base64data: |' >>"$csv_file"
+awk 'BEGIN { for (i = 0; i < 2632; i++) printf "        %s\n", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }' >>"$csv_file"
+printf '%s\n' '      mediatype: image/png' >>"$csv_file"
 
 update_catalog_icon "$catalog_template" "$csv_file" krkn-operator-acm
-icon=$(yq -r '.entries[] | select(.schema == "olm.package" and .name == "krkn-operator-acm") | .icon.base64data' "$catalog_template")
 mediatype=$(yq -r '.entries[] | select(.schema == "olm.package" and .name == "krkn-operator-acm") | .icon.mediatype' "$catalog_template")
-[[ "$icon" == dGVzdC1pY29u && "$mediatype" == image/png ]] || {
+[[ "$mediatype" == image/png ]] || {
   echo "catalog icon was not updated" >&2
+  exit 1
+}
+yq -r '.entries[] | select(.schema == "olm.package" and .name == "krkn-operator-acm") | .icon.base64data' "$catalog_template" >"$test_dir/catalog-icon.txt"
+yq -r '.spec.icon[0].base64data' "$csv_file" >"$test_dir/csv-icon.txt"
+tr -d '\n' <"$test_dir/catalog-icon.txt" >"$test_dir/catalog-icon-normalized.txt"
+tr -d '\n' <"$test_dir/csv-icon.txt" >"$test_dir/csv-icon-normalized.txt"
+cmp -s "$test_dir/catalog-icon-normalized.txt" "$test_dir/csv-icon-normalized.txt" || {
+  echo "catalog icon payload was not preserved" >&2
   exit 1
 }
 
