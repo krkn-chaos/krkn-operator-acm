@@ -25,17 +25,24 @@ update_catalog_icon() {
     echo "bundle CSV icon is missing" >&2
     return 1
   }
-  export ICON_BASE64="$icon_base64" ICON_MEDIATYPE="$icon_mediatype" OLM_PACKAGE_NAME="$package_name"
+  local icon_base64_file
+  icon_base64_file=$(mktemp "${TMPDIR:-/tmp}/krkn-operator-acm-icon.XXXXXX")
+  printf '%s' "$icon_base64" >"$icon_base64_file"
+  export ICON_BASE64_FILE="$icon_base64_file" ICON_MEDIATYPE="$icon_mediatype" OLM_PACKAGE_NAME="$package_name"
   package_entries=$(yq -r \
     '.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .name' \
     "$catalog_template" | wc -l | tr -d ' ')
   [[ "$package_entries" == 1 ]] || {
     echo "expected one package entry, found $package_entries" >&2
+    rm -f "$icon_base64_file"
+    unset ICON_BASE64_FILE ICON_MEDIATYPE OLM_PACKAGE_NAME
     return 1
   }
   yq -i \
-    '(.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .icon) = {"base64data": strenv(ICON_BASE64), "mediatype": strenv(ICON_MEDIATYPE)}' \
+    '(.entries[] | select(.schema == "olm.package" and .name == strenv(OLM_PACKAGE_NAME)) | .icon) = {"base64data": load_str(strenv(ICON_BASE64_FILE)), "mediatype": strenv(ICON_MEDIATYPE)}' \
     "$catalog_template"
+  rm -f "$icon_base64_file"
+  unset ICON_BASE64_FILE ICON_MEDIATYPE OLM_PACKAGE_NAME
 }
 
 main() {
