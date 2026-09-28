@@ -23,6 +23,7 @@ output_dir=$2
 command -v yq >/dev/null || { echo "yq is required" >&2; exit 1; }
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+source "$repo_root/hack/olm/release-channel.sh"
 operator_sdk=${OPERATOR_SDK:-operator-sdk}
 if command -v "$operator_sdk" >/dev/null 2>&1; then
   operator_sdk=$(command -v "$operator_sdk")
@@ -47,7 +48,12 @@ output_dir="$(cd "$output_parent" && pwd)/$(basename "$output_dir")"
 
 operator_image=${OPERATOR_IMAGE:-quay.io/krkn-chaos/krkn-operator-acm:${version}}
 min_kube_version=${MIN_KUBE_VERSION:-1.19.0}
-channel=${CHANNEL:-stable-acm}
+derived_channel=$(release_channel_for_version stable-acm "$version")
+if [[ -n "${CHANNEL:-}" && "$CHANNEL" != "$derived_channel" ]]; then
+  echo "CHANNEL override $CHANNEL does not match release channel $derived_channel" >&2
+  exit 2
+fi
+channel=${CHANNEL:-$derived_channel}
 icon_file="$repo_root/config/manifests/bases/krkn-operator-acm-icon.png"
 [[ -f "$icon_file" ]] || { echo "bundle icon is required: $icon_file" >&2; exit 1; }
 
