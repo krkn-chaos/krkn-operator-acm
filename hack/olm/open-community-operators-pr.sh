@@ -99,6 +99,11 @@ channel_name=$(release_channel_for_version stable-acm "$version")
   echo "rendered ACM bundle is incomplete: $bundle_dir" >&2
   exit 1
 }
+csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
+[[ -n "$csv_file" ]] || {
+  echo "rendered ACM bundle does not contain a ClusterServiceVersion manifest" >&2
+  exit 1
+}
 : "${COMMUNITY_OPERATORS_FORK:?COMMUNITY_OPERATORS_FORK must be configured}"
 : "${GH_TOKEN:?GH_TOKEN must be configured with permission to push to the fork and open upstream PRs}"
 validate_fork "$COMMUNITY_OPERATORS_FORK"
@@ -141,8 +146,6 @@ fi
 mkdir -p "$version_dir"
 cp -R "$bundle_dir/manifests" "$version_dir/manifests"
 cp -R "$bundle_dir/metadata" "$version_dir/metadata"
-csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
-[[ -n "$csv_file" ]] || { echo "bundle CSV not found" >&2; exit 1; }
 bundle_channel=$(yq -r '.annotations."operators.operatorframework.io.bundle.channels.v1" // ""' "$bundle_dir/metadata/annotations.yaml")
 [[ "$bundle_channel" == "$channel_name" ]] || {
   echo "bundle channel $bundle_channel does not match release channel $channel_name" >&2

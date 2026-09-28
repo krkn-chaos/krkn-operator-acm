@@ -50,6 +50,9 @@ jobs:
       - name: Test catalog submission helpers
         run: bash hack/olm/test-open-community-operators-pr.sh
 
+      - name: Test Kubernetes OperatorHub submission validation
+        run: bash hack/olm/test-open-kubernetes-operators-pr.sh
+
       - name: Validate OLM bundle renderer
         run: bash hack/olm/test-render-bundle.sh
 
