@@ -30,6 +30,23 @@ channel_has_entries() {
   [[ "$(yq -r '[.entries[] | select(.schema == "olm.channel" and .package == strenv(OLM_PACKAGE_NAME) and .name == strenv(OLM_CHANNEL_NAME) and (.entries | length > 0))] | length' "$catalog_template")" == 1 ]]
 }
 
+write_release_config() {
+  local version_dir=$1
+  local channel_name=$2
+  local previous_bundle=$3
+
+  cat > "$version_dir/release-config.yaml" <<EOF
+---
+catalog_templates:
+  - template_name: basic.yaml
+    channels:
+      - $channel_name
+EOF
+  if [[ -n "$previous_bundle" ]]; then
+    printf '    replaces: %s\n' "$previous_bundle" >>"$version_dir/release-config.yaml"
+  fi
+}
+
 validate_fork() {
   local fork=$1
   [[ "$fork" =~ ^[^/]+/[^/]+$ ]] || {
@@ -126,18 +143,14 @@ cp -R "$bundle_dir/manifests" "$version_dir/manifests"
 cp -R "$bundle_dir/metadata" "$version_dir/metadata"
 csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
 [[ -n "$csv_file" ]] || { echo "bundle CSV not found" >&2; exit 1; }
+bundle_channel=$(yq -r '.annotations."operators.operatorframework.io.bundle.channels.v1" // ""' "$bundle_dir/metadata/annotations.yaml")
+[[ "$bundle_channel" == "$channel_name" ]] || {
+  echo "bundle channel $bundle_channel does not match release channel $channel_name" >&2
+  exit 1
+}
 update_catalog_icon "$catalog_template" "$csv_file" "$package_name"
 
-cat > "$version_dir/release-config.yaml" <<EOF
----
-catalog_templates:
-  - template_name: basic.yaml
-    channels:
-      - $channel_name
-EOF
-if [[ -n "$previous_bundle" ]]; then
-  printf '    replaces: %s\n' "$previous_bundle" >>"$version_dir/release-config.yaml"
-fi
+write_release_config "$version_dir" "$channel_name" "$previous_bundle"
 
 git -C "$work_dir/catalog" add "operators/$package_name/$version" "$catalog_template"
 git -C "$work_dir/catalog" commit -m "operator: update $package_name bundle to $version"
