@@ -1,0 +1,13 @@
+---
+schema: olm.template.basic
+entries:
+  - defaultChannel: stable-acm
+    name: krkn-operator-acm
+    schema: olm.package
+  - entries:
+      - name: krkn-operator-acm.v1.1.0
+        replaces: krkn-operator-acm.v1.0.6
+      - name: krkn-operator-acm.v1.0.6
+    name: stable-acm
+    package: krkn-operator-acm
+    schema: olm.channel
