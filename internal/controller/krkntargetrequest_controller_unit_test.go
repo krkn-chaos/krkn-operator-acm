@@ -21,6 +21,7 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -95,11 +96,69 @@ func TestOfflineClusterTarget(t *testing.T) {
 	if target.ClusterAPIURL != "https://offline.example.com:6443" {
 		t.Fatalf("ClusterAPIURL = %q, want %q", target.ClusterAPIURL, "https://offline.example.com:6443")
 	}
-	if target.Online == nil || *target.Online {
-		t.Fatal("Online should be false for an offline cluster")
+	if target.Online != nil {
+		t.Fatal("Online should be omitted when no liveness check was performed")
 	}
-	if target.CheckedAt == nil || target.CheckedAt.IsZero() {
-		t.Fatal("CheckedAt should be populated for an offline cluster")
+	if target.CheckedAt != nil {
+		t.Fatal("CheckedAt should be omitted when no liveness check was performed")
+	}
+}
+
+func TestClusterHealthStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []ManagedClusterCondition
+		want       krknv1alpha1.ClusterHealthStatus
+	}{
+		{
+			name:       "available",
+			conditions: []ManagedClusterCondition{{Type: managedClusterConditionAvailable, Status: "True"}},
+			want:       krknv1alpha1.ClusterStatusHealthy,
+		},
+		{
+			name:       "not available",
+			conditions: []ManagedClusterCondition{{Type: managedClusterConditionAvailable, Status: "False"}},
+			want:       krknv1alpha1.ClusterStatusUnhealthy,
+		},
+		{
+			name: "stopped lease updates",
+			conditions: []ManagedClusterCondition{{
+				Type: managedClusterConditionAvailable, Status: "Unknown", Reason: "ManagedClusterLeaseUpdateStopped",
+			}},
+			want: krknv1alpha1.ClusterStatusUnhealthy,
+		},
+		{
+			name:       "other unknown reason",
+			conditions: []ManagedClusterCondition{{Type: managedClusterConditionAvailable, Status: "Unknown", Reason: "Initializing"}},
+			want:       krknv1alpha1.ClusterStatusUnknown,
+		},
+		{
+			name:       "available condition missing",
+			conditions: []ManagedClusterCondition{{Type: "Managed", Status: "True"}},
+			want:       krknv1alpha1.ClusterStatusUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cluster := ManagedCluster{}
+			cluster.Status.Conditions = tt.conditions
+			if got := clusterHealthStatus(cluster); got != tt.want {
+				t.Fatalf("clusterHealthStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedClusterAvailableConditionDecodesFromACMJSON(t *testing.T) {
+	const payload = `{"metadata":{"name":"local-cluster"},"status":{"conditions":[{"type":"ManagedClusterConditionAvailable","status":"True","reason":"ManagedClusterAvailable"}]}}`
+
+	var cluster ManagedCluster
+	if err := json.Unmarshal([]byte(payload), &cluster); err != nil {
+		t.Fatalf("failed to decode ManagedCluster status: %v", err)
+	}
+	if got := clusterHealthStatus(cluster); got != krknv1alpha1.ClusterStatusHealthy {
+		t.Fatalf("clusterHealthStatus() = %q, want %q", got, krknv1alpha1.ClusterStatusHealthy)
 	}
 }
 
