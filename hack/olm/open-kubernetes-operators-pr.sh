@@ -3,6 +3,8 @@ set -euo pipefail
 
 package_name=krkn-operator-acm
 catalog_repository=${KUBERNETES_OPERATORS_REPOSITORY:-k8s-operatorhub/community-operators}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source "$script_dir/catalog-git.sh"
 
 usage() {
   echo "usage: $0 <version> <rendered-bundle>" >&2
@@ -35,23 +37,15 @@ csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f \
   exit 2
 }
 
-git config --global user.name "github-actions[bot]"
-git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-gh auth setup-git
-
 fork_owner=${KUBERNETES_OPERATORS_FORK%%/*}
 work_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/kubernetes-community-operators.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT
 
-gh repo clone "$KUBERNETES_OPERATORS_FORK" "$work_dir/catalog" >/dev/null
-if git -C "$work_dir/catalog" remote get-url upstream >/dev/null 2>&1; then
-  git -C "$work_dir/catalog" remote set-url upstream "https://github.com/$catalog_repository.git"
-else
-  git -C "$work_dir/catalog" remote add upstream "https://github.com/$catalog_repository.git"
-fi
-git -C "$work_dir/catalog" remote set-url origin "https://github.com/$KUBERNETES_OPERATORS_FORK.git"
-git -C "$work_dir/catalog" fetch --quiet upstream main
-git -C "$work_dir/catalog" checkout --quiet -B "automation/$package_name-$version" upstream/main
+prepare_catalog_checkout \
+  "$KUBERNETES_OPERATORS_FORK" \
+  "$catalog_repository" \
+  "automation/$package_name-$version" \
+  "$work_dir/catalog"
 
 package_dir="$work_dir/catalog/operators/$package_name"
 version_dir="$package_dir/$version"
