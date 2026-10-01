@@ -57,7 +57,20 @@ type ManagedCluster struct {
 			CABundle string `json:"caBundle"`
 		} `json:"managedClusterClientConfigs"`
 	} `json:"spec"`
+	Status struct {
+		Conditions []ManagedClusterCondition `json:"conditions"`
+	} `json:"status"`
 }
+
+// ManagedClusterCondition is the subset of an OCM condition used for the
+// ClusterTarget sanity status.
+type ManagedClusterCondition struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+const managedClusterConditionAvailable = "ManagedClusterConditionAvailable"
 
 // ManagedClusterList represents a list of managed clusters
 type ManagedClusterList struct {
@@ -217,11 +230,14 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
+		clusterStatus := clusterHealthStatus(cluster)
 		logger.Info("processing cluster", "name", clusterName)
 
 		if len(cluster.Spec.ManagedClusterClientConfigs) == 0 {
 			logger.Info("cluster has no client configs, marking offline", "name", clusterName)
-			targetData = append(targetData, offlineClusterTarget(clusterName, ""))
+			target := offlineClusterTarget(clusterName, "")
+			target.ClusterStatus = clusterStatus
+			targetData = append(targetData, target)
 			continue
 		}
 
@@ -231,11 +247,29 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Get proxy configuration for this cluster
 		proxyConfig, err := r.getProxyConfig(ctx, clusterName)
 		if err != nil {
-			// Configuration error - cluster cannot be accessed, log as Error for visibility
-			logger.Error(err, "proxy mode configuration invalid, marking cluster offline",
+			logger.Error(err, "proxy mode prerequisites unavailable, marking cluster offline",
 				"cluster", clusterName,
 				"action", "marking-offline")
-			targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
+
+			// Keep the proxy endpoint on offline targets when proxy mode is enabled.
+			// Falling back to the ManagedCluster API URL publishes an endpoint that
+			// the consumer cannot reach through the hub proxy.
+			offlineURL := clusterURL
+			if isProxyModeEnabled(ctx, clusterName) {
+				offlineURL = ""
+				proxyURL, proxyErr := r.getProxyURL(ctx, clusterName)
+				if proxyErr != nil {
+					logger.Error(proxyErr, "failed to resolve proxy URL for offline cluster",
+						"cluster", clusterName)
+				} else {
+					offlineURL = proxyURL
+				}
+			}
+			target := offlineClusterTarget(clusterName, offlineURL)
+			// Proxy mode was explicitly requested but its ACM prerequisites are
+			// not ready, so the ACM sanity check has a known unhealthy result.
+			target.ClusterStatus = krknv1alpha1.ClusterStatusUnhealthy
+			targetData = append(targetData, target)
 			continue
 		}
 
@@ -258,7 +292,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					logger.Error(err, "failed to get cluster secret, marking cluster offline",
 						"cluster", clusterName, "secret", secretName)
 				}
-				targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
+				target := offlineClusterTarget(clusterName, clusterURL)
+				target.ClusterStatus = clusterStatus
+				targetData = append(targetData, target)
 				continue
 			}
 
@@ -267,7 +303,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if !ok {
 				logger.Error(fmt.Errorf("token not found in secret"), "missing token",
 					"cluster", clusterName)
-				targetData = append(targetData, offlineClusterTarget(clusterName, clusterURL))
+				target := offlineClusterTarget(clusterName, clusterURL)
+				target.ClusterStatus = clusterStatus
+				targetData = append(targetData, target)
 				continue
 			}
 			token = string(tokenBytes)
@@ -281,7 +319,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if proxyConfig.Enabled {
 				actualURL = proxyConfig.ProxyURL
 			}
-			targetData = append(targetData, offlineClusterTarget(clusterName, actualURL))
+			target := offlineClusterTarget(clusterName, actualURL)
+			target.ClusterStatus = clusterStatus
+			targetData = append(targetData, target)
 			continue
 		}
 
@@ -301,6 +341,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if livenessErr != nil {
 			logger.Error(livenessErr, "cluster liveness check failed", "cluster", clusterName)
 		}
+		target.ClusterStatus = clusterStatus
 
 		clustersData[clusterName] = ClusterData{
 			ClusterName: clusterName,
@@ -414,18 +455,39 @@ func buildClusterTargetWithLiveness(
 	}, livenessErr
 }
 
+// clusterHealthStatus reports whether ACM considers a managed cluster healthy.
+// Unknown condition states remain unknown unless ACM identifies the stopped
+// lease updates that make the cluster's connection state inconsistent.
+func clusterHealthStatus(cluster ManagedCluster) krknv1alpha1.ClusterHealthStatus {
+	for _, condition := range cluster.Status.Conditions {
+		if condition.Type != managedClusterConditionAvailable {
+			continue
+		}
+
+		switch condition.Status {
+		case "True":
+			return krknv1alpha1.ClusterStatusHealthy
+		case "False":
+			return krknv1alpha1.ClusterStatusUnhealthy
+		case "Unknown":
+			if condition.Reason == "ManagedClusterLeaseUpdateStopped" {
+				return krknv1alpha1.ClusterStatusUnhealthy
+			}
+		}
+		return krknv1alpha1.ClusterStatusUnknown
+	}
+
+	return krknv1alpha1.ClusterStatusUnknown
+}
+
 // offlineClusterTarget creates target data for a cluster that could not be
 // prepared for a liveness check. The cluster remains discoverable and the
-// consumer can present it as unavailable.
+// consumer can present it as unavailable. Online and CheckedAt are omitted
+// because no liveness check was performed.
 func offlineClusterTarget(clusterName, clusterAPIURL string) krknv1alpha1.ClusterTarget {
-	online := false
-	checkedAt := metav1.Now()
-
 	return krknv1alpha1.ClusterTarget{
 		ClusterName:   clusterName,
 		ClusterAPIURL: clusterAPIURL,
-		Online:        &online,
-		CheckedAt:     &checkedAt,
 	}
 }
 

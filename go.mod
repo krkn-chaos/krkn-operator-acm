@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/krkn-chaos/krkn-operator v1.0.1-0.20260910075505-e2bfa7d6d7df
+	github.com/krkn-chaos/krkn-operator v1.1.0-rc4
 	github.com/krkn-chaos/krknctl v0.14.2-beta
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
