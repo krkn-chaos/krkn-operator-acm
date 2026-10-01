@@ -29,7 +29,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -234,6 +236,130 @@ func TestReconcileCompletesExistingContribution(t *testing.T) {
 	}
 	if updated.Status.Completed == nil {
 		t.Fatal("Completed timestamp is nil")
+	}
+}
+
+func TestReconcileMarksProxyClusterUnhealthyWhenManifestWorkIsNotReady(t *testing.T) {
+	ctx := context.Background()
+	const clusterName = "managed-cluster"
+	const proxyURL = "https://cluster-proxy-addon-user.multicluster-engine.svc:9092/managed-cluster"
+
+	store := kvstore.Get()
+	proxyConfigKey := formatProxyVarName(clusterName)
+	store.SetValue(proxyConfigKey, "true")
+	t.Cleanup(func() { store.Delete(proxyConfigKey) })
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+	if err := krknv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add KrknOperator scheme: %v", err)
+	}
+	managedClusterGVK := schema.GroupVersionKind{
+		Group: "cluster.open-cluster-management.io", Version: "v1", Kind: "ManagedCluster",
+	}
+	manifestWorkGVK := schema.GroupVersionKind{
+		Group: "work.open-cluster-management.io", Version: "v1", Kind: "ManifestWork",
+	}
+	proxyConfigGVK := schema.GroupVersionKind{
+		Group: "proxy.open-cluster-management.io", Version: "v1alpha1", Kind: "ManagedProxyConfiguration",
+	}
+	for _, gvk := range []schema.GroupVersionKind{managedClusterGVK, manifestWorkGVK, proxyConfigGVK} {
+		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
+	}
+
+	now := metav1.Now()
+	request := &krknv1alpha1.KrknTargetRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "target-request", Namespace: "operator-system", CreationTimestamp: now,
+		},
+		Spec:   krknv1alpha1.KrknTargetRequestSpec{UUID: "target-request-uuid"},
+		Status: krknv1alpha1.KrknTargetRequestStatus{Status: "pending"},
+	}
+	providerObject := &krknv1alpha1.KrknOperatorTargetProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "acm-provider", Namespace: "operator-system", CreationTimestamp: now,
+		},
+		Spec: krknv1alpha1.KrknOperatorTargetProviderSpec{OperatorName: "krkn-operator-acm", Active: true},
+	}
+	managedCluster := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "cluster.open-cluster-management.io/v1",
+		"kind":       "ManagedCluster",
+		"metadata":   map[string]interface{}{"name": clusterName},
+		"spec": map[string]interface{}{
+			"managedClusterClientConfigs": []interface{}{
+				map[string]interface{}{"url": "https://external.example.com:6443"},
+			},
+		},
+		"status": map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": managedClusterConditionAvailable, "status": "True"},
+			},
+		},
+	}}
+	managedCluster.SetGroupVersionKind(managedClusterGVK)
+	manifestWork := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "work.open-cluster-management.io/v1",
+		"kind":       "ManifestWork",
+		"metadata":   map[string]interface{}{"name": ManifestWorkName, "namespace": clusterName},
+	}}
+	manifestWork.SetGroupVersionKind(manifestWorkGVK)
+	proxyConfig := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "proxy.open-cluster-management.io/v1alpha1",
+		"kind":       "ManagedProxyConfiguration",
+		"metadata":   map[string]interface{}{"name": "cluster-proxy"},
+		"spec": map[string]interface{}{
+			"proxyServer": map[string]interface{}{"namespace": "multicluster-engine"},
+		},
+	}}
+	proxyConfig.SetGroupVersionKind(proxyConfigGVK)
+	proxyService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster-proxy-addon-user", Namespace: "multicluster-engine",
+			Labels: map[string]string{ProxyServiceLabel: ProxyServiceLabelValue},
+		},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 9092}}},
+	}
+
+	reconciler := &KrknTargetRequestReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(request).
+			WithObjects(request, providerObject, managedCluster, manifestWork, proxyConfig, proxyService).
+			Build(),
+		Scheme:            scheme,
+		OperatorName:      "krkn-operator-acm",
+		OperatorNamespace: "operator-system",
+	}
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: request.Name, Namespace: request.Namespace},
+	}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	updated := &krknv1alpha1.KrknTargetRequest{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Name: request.Name, Namespace: request.Namespace}, updated); err != nil {
+		t.Fatalf("failed to get reconciled request: %v", err)
+	}
+	targets := updated.Status.TargetData["krkn-operator-acm"]
+	if len(targets) != 1 {
+		t.Fatalf("target count = %d, want 1", len(targets))
+	}
+	target := targets[0]
+	if target.ClusterAPIURL != proxyURL {
+		t.Errorf("ClusterAPIURL = %q, want internal proxy URL %q", target.ClusterAPIURL, proxyURL)
+	}
+	if target.ClusterStatus != krknv1alpha1.ClusterStatusUnhealthy {
+		t.Errorf("ClusterStatus = %q, want %q", target.ClusterStatus, krknv1alpha1.ClusterStatusUnhealthy)
+	}
+	if target.Online != nil {
+		t.Errorf("Online = %v, want nil because liveness was not run", *target.Online)
+	}
+	if target.CheckedAt != nil {
+		t.Errorf("CheckedAt = %v, want nil because liveness was not run", target.CheckedAt)
 	}
 }
 

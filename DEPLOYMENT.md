@@ -351,7 +351,11 @@ kubectl get krkntargetrequest my-request -o yaml
 
 The status should show:
 - `status: Completed`
-- `targetData`: List of clusters with their names and API URLs
+- `targetData`: List of clusters with their names and API URLs. Each entry can also include:
+  - `cluster-status`: ACM's cluster health sanity check. `healthy` means ACM reports the cluster available; `unhealthy` means ACM reports it unavailable or proxy prerequisites are not ready; `unknown` means ACM has no conclusive availability state.
+  - `online` and `checked-at`: The result and time of the Kubernetes API liveness check. `online: true` means the API responded; `online: false` means the check ran but failed. These fields are present only when the check ran. If they are absent, the operator could not prepare or run it, for example because proxy prerequisites or credentials were unavailable; absence does not mean the check returned offline.
+
+`cluster-status` and liveness are separate signals: a cluster can be `healthy` according to ACM while its API endpoint is offline, or have no liveness result when the operator could not reach the point of running the check.
 
 2. Retrieve the secret with cluster kubeconfigs:
 
