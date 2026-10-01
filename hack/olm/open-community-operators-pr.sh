@@ -5,6 +5,7 @@ set -euo pipefail
 package_name=krkn-operator-acm
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source "$script_dir/release-channel.sh"
+source "$script_dir/catalog-git.sh"
 
 ensure_catalog_channel() {
   local catalog_template=$1
@@ -99,28 +100,25 @@ channel_name=$(release_channel_for_version stable-acm "$version")
   echo "rendered ACM bundle is incomplete: $bundle_dir" >&2
   exit 1
 }
+csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
+[[ -n "$csv_file" ]] || {
+  echo "rendered ACM bundle does not contain a ClusterServiceVersion manifest" >&2
+  exit 1
+}
 : "${COMMUNITY_OPERATORS_FORK:?COMMUNITY_OPERATORS_FORK must be configured}"
 : "${GH_TOKEN:?GH_TOKEN must be configured with permission to push to the fork and open upstream PRs}"
 validate_fork "$COMMUNITY_OPERATORS_FORK"
-
-git config --global user.name "github-actions[bot]"
-git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-gh auth setup-git
 
 catalog_repository=${COMMUNITY_OPERATORS_REPOSITORY:-redhat-openshift-ecosystem/community-operators-prod}
 fork_owner=${COMMUNITY_OPERATORS_FORK%%/*}
 
 work_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/community-operators.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT
-gh repo clone "$COMMUNITY_OPERATORS_FORK" "$work_dir/catalog" >/dev/null
-if git -C "$work_dir/catalog" remote get-url upstream >/dev/null 2>&1; then
-  git -C "$work_dir/catalog" remote set-url upstream "https://github.com/$catalog_repository.git"
-else
-  git -C "$work_dir/catalog" remote add upstream "https://github.com/$catalog_repository.git"
-fi
-git -C "$work_dir/catalog" remote set-url origin "https://github.com/$COMMUNITY_OPERATORS_FORK.git"
-git -C "$work_dir/catalog" fetch --quiet upstream main
-git -C "$work_dir/catalog" checkout --quiet -B "automation/$package_name-$version" upstream/main
+prepare_catalog_checkout \
+  "$COMMUNITY_OPERATORS_FORK" \
+  "$catalog_repository" \
+  "automation/$package_name-$version" \
+  "$work_dir/catalog"
 
 package_dir="$work_dir/catalog/operators/$package_name"
 version_dir="$package_dir/$version"
@@ -141,8 +139,6 @@ fi
 mkdir -p "$version_dir"
 cp -R "$bundle_dir/manifests" "$version_dir/manifests"
 cp -R "$bundle_dir/metadata" "$version_dir/metadata"
-csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f -name '*.clusterserviceversion.yaml' -print -quit)
-[[ -n "$csv_file" ]] || { echo "bundle CSV not found" >&2; exit 1; }
 bundle_channel=$(yq -r '.annotations."operators.operatorframework.io.bundle.channels.v1" // ""' "$bundle_dir/metadata/annotations.yaml")
 [[ "$bundle_channel" == "$channel_name" ]] || {
   echo "bundle channel $bundle_channel does not match release channel $channel_name" >&2
