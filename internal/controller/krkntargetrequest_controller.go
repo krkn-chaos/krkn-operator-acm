@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -87,9 +88,28 @@ type ClusterData struct {
 // KrknTargetRequestReconciler reconciles a KrknTargetRequest object
 type KrknTargetRequestReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	OperatorName      string
-	OperatorNamespace string
+	Scheme                 *runtime.Scheme
+	OperatorName           string
+	OperatorNamespace      string
+	clusterLivenessProbe   func(context.Context, string, string) (clusterLivenessResult, error)
+	clusterCredentialProbe func(context.Context, string, time.Duration) error
+}
+
+const maxConcurrentClusterProbes = 8
+
+type clusterProbeInput struct {
+	cluster          ManagedCluster
+	clusterURL       string
+	clusterCABundle  string
+	probeURL         string
+	probeCABundle    string
+	proxyModeEnabled bool
+}
+
+type clusterProbeResult struct {
+	target   krknv1alpha1.ClusterTarget
+	liveness clusterLivenessResult
+	err      error
 }
 
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krkntargetrequests,verbs=get;list;watch;create;update;patch;delete
@@ -228,21 +248,76 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	clustersData := make(map[string]ClusterData)
 	targetData := make([]krknv1alpha1.ClusterTarget, 0, len(managedClusters.Items))
 
+	probeInputs := make([]clusterProbeInput, 0, len(managedClusters.Items))
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
-		clusterStatus := clusterHealthStatus(cluster)
-		logger.Info("processing cluster", "name", clusterName)
+		clusterURL := ""
+		clusterCABundle := ""
+		if len(cluster.Spec.ManagedClusterClientConfigs) > 0 {
+			clusterURL = cluster.Spec.ManagedClusterClientConfigs[0].URL
+			clusterCABundle = cluster.Spec.ManagedClusterClientConfigs[0].CABundle
+		}
 
-		if len(cluster.Spec.ManagedClusterClientConfigs) == 0 {
+		// Check endpoint reachability before loading cluster credentials or ACM
+		// health. The API health endpoints are available without a kubeconfig.
+		probeURL := clusterURL
+		probeCABundle := clusterCABundle
+		proxyModeEnabled := isProxyModeEnabled(ctx, clusterName)
+		if proxyModeEnabled {
+			// Never probe the public ManagedCluster URL when proxy mode was
+			// requested. Resolve the configured proxy route first.
+			probeURL = ""
+			proxyURL, proxyErr := r.getProxyURL(ctx, clusterName)
+			if proxyErr != nil {
+				logger.Error(proxyErr, "failed to resolve proxy URL for cluster liveness check", "cluster", clusterName)
+			} else {
+				probeURL = proxyURL
+				proxyCA, caErr := r.getProxyCA(ctx)
+				if caErr != nil {
+					logger.Error(caErr, "failed to resolve proxy CA for cluster liveness check", "cluster", clusterName)
+					probeCABundle = ""
+				} else {
+					probeCABundle = proxyCA
+				}
+			}
+		}
+		probeInputs = append(probeInputs, clusterProbeInput{
+			cluster:          cluster,
+			clusterURL:       clusterURL,
+			clusterCABundle:  clusterCABundle,
+			probeURL:         probeURL,
+			probeCABundle:    probeCABundle,
+			proxyModeEnabled: proxyModeEnabled,
+		})
+	}
+
+	livenessProbe := r.clusterLivenessProbe
+	if livenessProbe == nil {
+		livenessProbe = checkClusterAPILiveness
+	}
+	probeResults := probeManagedClusters(ctx, probeInputs, livenessProbe)
+
+	for i, input := range probeInputs {
+		cluster := input.cluster
+		clusterName := cluster.Metadata.Name
+		logger.Info("processing cluster", "name", clusterName)
+		clusterURL := input.clusterURL
+		clusterCABundle := input.clusterCABundle
+		probeURL := input.probeURL
+		proxyModeEnabled := input.proxyModeEnabled
+		probeResult := probeResults[i]
+		target, liveness, livenessErr := probeResult.target, probeResult.liveness, probeResult.err
+		if livenessErr != nil {
+			logger.Error(livenessErr, "cluster liveness check failed", "cluster", clusterName)
+		}
+		clusterStatus := clusterHealthStatusAfterLiveness(cluster, liveness)
+
+		if len(cluster.Spec.ManagedClusterClientConfigs) == 0 && !proxyModeEnabled {
 			logger.Info("cluster has no client configs, marking offline", "name", clusterName)
-			target := offlineClusterTarget(clusterName, "")
 			target.ClusterStatus = clusterStatus
 			targetData = append(targetData, target)
 			continue
 		}
-
-		clusterURL := cluster.Spec.ManagedClusterClientConfigs[0].URL
-		clusterCABundle := cluster.Spec.ManagedClusterClientConfigs[0].CABundle
 
 		// Get proxy configuration for this cluster
 		proxyConfig, err := r.getProxyConfig(ctx, clusterName)
@@ -251,27 +326,18 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				"cluster", clusterName,
 				"action", "marking-offline")
 
-			// Keep the proxy endpoint on offline targets when proxy mode is enabled.
-			// Falling back to the ManagedCluster API URL publishes an endpoint that
-			// the consumer cannot reach through the hub proxy.
-			offlineURL := clusterURL
-			if isProxyModeEnabled(ctx, clusterName) {
-				offlineURL = ""
-				proxyURL, proxyErr := r.getProxyURL(ctx, clusterName)
-				if proxyErr != nil {
-					logger.Error(proxyErr, "failed to resolve proxy URL for offline cluster",
-						"cluster", clusterName)
-				} else {
-					offlineURL = proxyURL
-				}
-			}
-			target := offlineClusterTarget(clusterName, offlineURL)
-			// Proxy mode was explicitly requested but its ACM prerequisites are
-			// not ready, so the ACM sanity check has a known unhealthy result.
-			target.ClusterStatus = krknv1alpha1.ClusterStatusUnhealthy
+			target.ClusterAPIURL = probeURL
+			// Missing proxy prerequisites are unhealthy only when the cluster API
+			// is reachable; an offline cluster's health remains unknown.
+			target.ClusterStatus = clusterHealthStatusAfterProxyPrerequisiteFailure(liveness)
 			targetData = append(targetData, target)
 			continue
 		}
+		actualURL := clusterURL
+		if proxyConfig.Enabled {
+			actualURL = proxyConfig.ProxyURL
+		}
+		target.ClusterAPIURL = actualURL
 
 		// Get token based on proxy mode
 		var token string
@@ -292,7 +358,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 					logger.Error(err, "failed to get cluster secret, marking cluster offline",
 						"cluster", clusterName, "secret", secretName)
 				}
-				target := offlineClusterTarget(clusterName, clusterURL)
+				target.ClusterAPIURL = actualURL
 				target.ClusterStatus = clusterStatus
 				targetData = append(targetData, target)
 				continue
@@ -303,7 +369,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			if !ok {
 				logger.Error(fmt.Errorf("token not found in secret"), "missing token",
 					"cluster", clusterName)
-				target := offlineClusterTarget(clusterName, clusterURL)
+				target.ClusterAPIURL = actualURL
 				target.ClusterStatus = clusterStatus
 				targetData = append(targetData, target)
 				continue
@@ -315,11 +381,7 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		kubeconfig, err := r.generateKubeconfig(clusterName, clusterURL, clusterCABundle, token, proxyConfig)
 		if err != nil {
 			logger.Error(err, "failed to generate kubeconfig", "cluster", clusterName)
-			actualURL := clusterURL
-			if proxyConfig.Enabled {
-				actualURL = proxyConfig.ProxyURL
-			}
-			target := offlineClusterTarget(clusterName, actualURL)
+			target.ClusterAPIURL = actualURL
 			target.ClusterStatus = clusterStatus
 			targetData = append(targetData, target)
 			continue
@@ -327,20 +389,24 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 		// Encode kubeconfig as base64
 		kubeconfigBase64 := base64.StdEncoding.EncodeToString([]byte(kubeconfig))
-
-		// Use actual URL (proxy or direct) for ClusterAPIURL
-		actualURL := clusterURL
-		if proxyConfig.Enabled {
-			actualURL = proxyConfig.ProxyURL
+		credentialProbe := r.clusterCredentialProbe
+		if credentialProbe == nil {
+			credentialProbe = provider.CheckClusterLiveness
+		}
+		if liveness.Online && liveness.Healthy {
+			if err := validateClusterCredentials(ctx, kubeconfigBase64, credentialProbe); err != nil {
+				logger.Error(err, "generated cluster credentials failed validation", "cluster", clusterName)
+				// Online is the usability signal consumed by older clients. Do not
+				// advertise a target whose generated credentials cannot access the
+				// API, even if its anonymous health probe succeeded.
+				online := false
+				target.Online = &online
+				target.ClusterStatus = krknv1alpha1.ClusterStatusUnhealthy
+				targetData = append(targetData, target)
+				continue
+			}
 		}
 
-		// Check liveness with the same kubeconfig that will be returned to the
-		// consumer. Keep the target in the request even when the check fails so
-		// the CRD records the discovery result and the failure remains visible.
-		target, livenessErr := buildClusterTargetWithLiveness(ctx, clusterName, actualURL, kubeconfigBase64)
-		if livenessErr != nil {
-			logger.Error(livenessErr, "cluster liveness check failed", "cluster", clusterName)
-		}
 		target.ClusterStatus = clusterStatus
 
 		clustersData[clusterName] = ClusterData{
@@ -437,22 +503,74 @@ func (r *KrknTargetRequestReconciler) cleanupOldTargetRequests(ctx context.Conte
 	return nil
 }
 
-// buildClusterTargetWithLiveness creates the target data returned by discovery
-// and records the result of checking the exact kubeconfig stored in the secret.
-func buildClusterTargetWithLiveness(
+// buildClusterTargetWithProbe creates discovery target data and records the
+// API endpoint liveness result independently from credentials and kubeconfig.
+func buildClusterTargetWithProbe(
 	ctx context.Context,
-	clusterName, clusterAPIURL, kubeconfigBase64 string,
-) (krknv1alpha1.ClusterTarget, error) {
-	livenessErr := provider.CheckClusterLiveness(ctx, kubeconfigBase64, 0)
-	online := livenessErr == nil
+	clusterName, clusterAPIURL, caBundle string,
+	probe func(context.Context, string, string) (clusterLivenessResult, error),
+) (krknv1alpha1.ClusterTarget, clusterLivenessResult, error) {
+	liveness, livenessErr := probe(ctx, clusterAPIURL, caBundle)
+	online := liveness.Online
 	checkedAt := metav1.Now()
 
-	return krknv1alpha1.ClusterTarget{
+	target := krknv1alpha1.ClusterTarget{
 		ClusterName:   clusterName,
 		ClusterAPIURL: clusterAPIURL,
 		Online:        &online,
 		CheckedAt:     &checkedAt,
-	}, livenessErr
+	}
+	return target, liveness, livenessErr
+}
+
+func validateClusterCredentials(
+	ctx context.Context,
+	kubeconfigBase64 string,
+	probe func(context.Context, string, time.Duration) error,
+) error {
+	if probe == nil {
+		return fmt.Errorf("cluster credential probe must not be nil")
+	}
+	return probe(ctx, kubeconfigBase64, clusterLivenessTimeout)
+}
+
+// probeManagedClusters runs the anonymous API probes with bounded concurrency
+// and keeps results indexed to the original managed-cluster order.
+func probeManagedClusters(
+	ctx context.Context,
+	inputs []clusterProbeInput,
+	probe func(context.Context, string, string) (clusterLivenessResult, error),
+) []clusterProbeResult {
+	results := make([]clusterProbeResult, len(inputs))
+	if len(inputs) == 0 {
+		return results
+	}
+
+	workerCount := maxConcurrentClusterProbes
+	if len(inputs) < workerCount {
+		workerCount = len(inputs)
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for i := range jobs {
+				input := inputs[i]
+				target, liveness, err := buildClusterTargetWithProbe(
+					ctx, input.cluster.Metadata.Name, input.probeURL, input.probeCABundle, probe,
+				)
+				results[i] = clusterProbeResult{target: target, liveness: liveness, err: err}
+			}
+		}()
+	}
+	for i := range inputs {
+		jobs <- i
+	}
+	close(jobs)
+	workers.Wait()
+	return results
 }
 
 // clusterHealthStatus reports whether ACM considers a managed cluster healthy.
@@ -480,15 +598,33 @@ func clusterHealthStatus(cluster ManagedCluster) krknv1alpha1.ClusterHealthStatu
 	return krknv1alpha1.ClusterStatusUnknown
 }
 
-// offlineClusterTarget creates target data for a cluster that could not be
-// prepared for a liveness check. The cluster remains discoverable and the
-// consumer can present it as unavailable. Online and CheckedAt are omitted
-// because no liveness check was performed.
-func offlineClusterTarget(clusterName, clusterAPIURL string) krknv1alpha1.ClusterTarget {
-	return krknv1alpha1.ClusterTarget{
-		ClusterName:   clusterName,
-		ClusterAPIURL: clusterAPIURL,
+// clusterHealthStatusAfterLiveness keeps API reachability separate from the
+// ACM health result: an unreachable API has unknown health, while a reachable
+// API with a failing health endpoint is unhealthy. ACM health is considered
+// only after the endpoint is reachable and healthy.
+func clusterHealthStatusAfterLiveness(
+	cluster ManagedCluster,
+	liveness clusterLivenessResult,
+) krknv1alpha1.ClusterHealthStatus {
+	if !liveness.Online {
+		return krknv1alpha1.ClusterStatusUnknown
 	}
+	if !liveness.Healthy {
+		return krknv1alpha1.ClusterStatusUnhealthy
+	}
+	return clusterHealthStatus(cluster)
+}
+
+// clusterHealthStatusAfterProxyPrerequisiteFailure reports unknown health when
+// the API is offline; when it is reachable, missing proxy prerequisites are a
+// known inconsistent ACM configuration.
+func clusterHealthStatusAfterProxyPrerequisiteFailure(
+	liveness clusterLivenessResult,
+) krknv1alpha1.ClusterHealthStatus {
+	if !liveness.Online {
+		return krknv1alpha1.ClusterStatusUnknown
+	}
+	return krknv1alpha1.ClusterStatusUnhealthy
 }
 
 // getManagedClusters retrieves all managed clusters from ACM

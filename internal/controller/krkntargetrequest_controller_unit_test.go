@@ -20,11 +20,13 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -33,8 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -42,68 +42,197 @@ import (
 	kvstore "github.com/krkn-chaos/krkn-operator/pkg/configstore"
 )
 
-func TestBuildClusterTargetWithLiveness(t *testing.T) {
+func TestBuildClusterTargetWithProbe(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		wantOnline bool
+		name          string
+		statusByPath  map[string]int
+		wantOnline    bool
+		wantHealthy   bool
+		wantErr       bool
+		wantPathCalls []string
 	}{
-		{name: "online cluster", statusCode: http.StatusOK, wantOnline: true},
-		{name: "offline cluster", statusCode: http.StatusServiceUnavailable, wantOnline: false},
+		{
+			name: "healthy API endpoint",
+			statusByPath: map[string]int{
+				"/proxy-route/readyz": http.StatusOK,
+			},
+			wantOnline: true, wantHealthy: true, wantPathCalls: []string{"/proxy-route/readyz"},
+		},
+		{
+			name: "reachable but unhealthy API endpoint",
+			statusByPath: map[string]int{
+				"/proxy-route/readyz": http.StatusServiceUnavailable,
+			},
+			wantOnline: true, wantErr: true, wantPathCalls: []string{"/proxy-route/readyz"},
+		},
+		{
+			name: "falls back when readyz is unsupported",
+			statusByPath: map[string]int{
+				"/proxy-route/readyz":  http.StatusNotFound,
+				"/proxy-route/livez":   http.StatusNotFound,
+				"/proxy-route/healthz": http.StatusOK,
+			},
+			wantOnline: true, wantHealthy: true,
+			wantPathCalls: []string{"/proxy-route/readyz", "/proxy-route/livez", "/proxy-route/healthz"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tt.statusCode)
-			}))
-			defer server.Close()
+			var pathCalls []string
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Method != http.MethodGet {
+					t.Errorf("health request method = %q, want GET", request.Method)
+				}
+				if authorization := request.Header.Get("Authorization"); authorization != "" {
+					t.Errorf("health request unexpectedly has Authorization header %q", authorization)
+				}
+				pathCalls = append(pathCalls, request.URL.Path)
+				statusCode, found := tt.statusByPath[request.URL.Path]
+				if !found {
+					statusCode = http.StatusNotFound
+				}
+				return &http.Response{
+					StatusCode: statusCode,
+					Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),
+					Body:       http.NoBody,
+					Header:     make(http.Header),
+					Request:    request,
+				}, nil
+			})}
 
-			target, err := buildClusterTargetWithLiveness(
+			target, liveness, err := buildClusterTargetWithProbe(
 				context.Background(),
 				"managed-cluster",
-				server.URL,
-				testLivenessKubeconfig(t, server.URL),
+				"http://api.example.com/proxy-route",
+				"",
+				func(ctx context.Context, apiURL, _ string) (clusterLivenessResult, error) {
+					parsedURL, err := url.Parse(apiURL)
+					if err != nil {
+						return clusterLivenessResult{}, err
+					}
+					return checkClusterAPILivenessWithClient(ctx, parsedURL, client)
+				},
 			)
 
-			if tt.wantOnline && err != nil {
-				t.Fatalf("buildClusterTargetWithLiveness() error = %v, want nil", err)
-			}
-			if !tt.wantOnline && err == nil {
-				t.Fatal("buildClusterTargetWithLiveness() error = nil, want liveness error")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("buildClusterTargetWithProbe() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
 			if target.Online == nil {
 				t.Fatal("Online is nil, want a liveness result")
 			}
-			if *target.Online != tt.wantOnline {
-				t.Fatalf("Online = %v, want %v", *target.Online, tt.wantOnline)
+			if *target.Online != tt.wantOnline || liveness.Healthy != tt.wantHealthy {
+				t.Fatalf("liveness = %+v (Online field %v), want online=%v healthy=%v", liveness, *target.Online, tt.wantOnline, tt.wantHealthy)
 			}
 			if target.CheckedAt == nil || target.CheckedAt.IsZero() {
 				t.Fatal("CheckedAt is nil or zero")
 			}
-			if target.ClusterName != "managed-cluster" || target.ClusterAPIURL != server.URL {
+			if target.ClusterName != "managed-cluster" || target.ClusterAPIURL != "http://api.example.com/proxy-route" {
 				t.Fatalf("target identity = %+v", target)
+			}
+			if len(pathCalls) != len(tt.wantPathCalls) {
+				t.Fatalf("health endpoint calls = %v, want %v", pathCalls, tt.wantPathCalls)
+			}
+			for i := range pathCalls {
+				if pathCalls[i] != tt.wantPathCalls[i] {
+					t.Fatalf("health endpoint calls = %v, want %v", pathCalls, tt.wantPathCalls)
+				}
 			}
 		})
 	}
 }
 
-func TestOfflineClusterTarget(t *testing.T) {
-	target := offlineClusterTarget("offline-cluster", "https://offline.example.com:6443")
+func TestCheckClusterAPILivenessMarksUnreachableEndpointOffline(t *testing.T) {
+	apiURL, err := url.Parse("https://offline.example.com:6443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	})}
+	result, err := checkClusterAPILivenessWithClient(context.Background(), apiURL, client)
+	if err == nil {
+		t.Fatal("checkClusterAPILiveness() error = nil, want connection error")
+	}
+	if result.Online || result.Healthy {
+		t.Fatalf("liveness result = %+v, want offline and unhealthy", result)
+	}
+}
 
-	if target.ClusterName != "offline-cluster" {
-		t.Fatalf("ClusterName = %q, want %q", target.ClusterName, "offline-cluster")
+func TestValidateClusterCredentialsUsesBoundedTimeout(t *testing.T) {
+	var gotKubeconfig string
+	var gotTimeout time.Duration
+	err := validateClusterCredentials(context.Background(), "encoded-kubeconfig", func(
+		_ context.Context, kubeconfig string, timeout time.Duration,
+	) error {
+		gotKubeconfig = kubeconfig
+		gotTimeout = timeout
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("validateClusterCredentials() error = %v", err)
 	}
-	if target.ClusterAPIURL != "https://offline.example.com:6443" {
-		t.Fatalf("ClusterAPIURL = %q, want %q", target.ClusterAPIURL, "https://offline.example.com:6443")
+	if gotKubeconfig != "encoded-kubeconfig" {
+		t.Fatalf("credential probe kubeconfig = %q, want encoded-kubeconfig", gotKubeconfig)
 	}
-	if target.Online != nil {
-		t.Fatal("Online should be omitted when no liveness check was performed")
+	if gotTimeout != clusterLivenessTimeout {
+		t.Fatalf("credential probe timeout = %s, want %s", gotTimeout, clusterLivenessTimeout)
 	}
-	if target.CheckedAt != nil {
-		t.Fatal("CheckedAt should be omitted when no liveness check was performed")
+}
+
+func TestValidateClusterCredentialsPropagatesFailure(t *testing.T) {
+	wantErr := fmt.Errorf("invalid token")
+	err := validateClusterCredentials(context.Background(), "encoded-kubeconfig", func(
+		_ context.Context, _ string, _ time.Duration,
+	) error {
+		return wantErr
+	})
+	if err != wantErr {
+		t.Fatalf("validateClusterCredentials() error = %v, want %v", err, wantErr)
 	}
+}
+
+func TestProbeManagedClustersPreservesOrderAndBoundsConcurrency(t *testing.T) {
+	inputs := make([]clusterProbeInput, maxConcurrentClusterProbes+2)
+	for i := range inputs {
+		inputs[i].cluster.Metadata.Name = fmt.Sprintf("cluster-%d", i)
+	}
+
+	var active, maxActive atomic.Int32
+	results := probeManagedClusters(context.Background(), inputs, func(
+		_ context.Context, apiURL, _ string,
+	) (clusterLivenessResult, error) {
+		current := active.Add(1)
+		for {
+			previous := maxActive.Load()
+			if current <= previous || maxActive.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+		active.Add(-1)
+		return clusterLivenessResult{Online: true, Healthy: true}, nil
+	})
+
+	if got := maxActive.Load(); got > maxConcurrentClusterProbes {
+		t.Fatalf("maximum concurrent probes = %d, want <= %d", got, maxConcurrentClusterProbes)
+	}
+	for i, result := range results {
+		want := fmt.Sprintf("cluster-%d", i)
+		if result.target.ClusterName != want {
+			t.Fatalf("result %d cluster = %q, want %q", i, result.target.ClusterName, want)
+		}
+		if result.err != nil || !result.liveness.Healthy {
+			t.Fatalf("result %d = %+v, want healthy result", i, result)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestClusterHealthStatus(t *testing.T) {
@@ -152,6 +281,52 @@ func TestClusterHealthStatus(t *testing.T) {
 	}
 }
 
+func TestClusterHealthStatusAfterLiveness(t *testing.T) {
+	cluster := ManagedCluster{}
+	cluster.Status.Conditions = []ManagedClusterCondition{{
+		Type: managedClusterConditionAvailable, Status: "True",
+	}}
+
+	if got := clusterHealthStatusAfterLiveness(cluster, clusterLivenessResult{}); got != krknv1alpha1.ClusterStatusUnknown {
+		t.Fatalf("offline cluster status = %q, want %q", got, krknv1alpha1.ClusterStatusUnknown)
+	}
+
+	if got := clusterHealthStatusAfterLiveness(cluster, clusterLivenessResult{Online: true}); got != krknv1alpha1.ClusterStatusUnhealthy {
+		t.Fatalf("reachable but unhealthy API status = %q, want %q", got, krknv1alpha1.ClusterStatusUnhealthy)
+	}
+
+	if got := clusterHealthStatusAfterLiveness(cluster, clusterLivenessResult{Online: true, Healthy: true}); got != krknv1alpha1.ClusterStatusHealthy {
+		t.Fatalf("online cluster status = %q, want %q", got, krknv1alpha1.ClusterStatusHealthy)
+	}
+}
+
+func TestClusterHealthStatusAfterProxyPrerequisiteFailure(t *testing.T) {
+	tests := []struct {
+		name     string
+		liveness clusterLivenessResult
+		want     krknv1alpha1.ClusterHealthStatus
+	}{
+		{
+			name:     "offline cluster health is unknown",
+			liveness: clusterLivenessResult{Online: false},
+			want:     krknv1alpha1.ClusterStatusUnknown,
+		},
+		{
+			name:     "reachable cluster with missing proxy prerequisites is unhealthy",
+			liveness: clusterLivenessResult{Online: true, Healthy: true},
+			want:     krknv1alpha1.ClusterStatusUnhealthy,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clusterHealthStatusAfterProxyPrerequisiteFailure(tt.liveness); got != tt.want {
+				t.Fatalf("cluster health status = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestManagedClusterAvailableConditionDecodesFromACMJSON(t *testing.T) {
 	const payload = `{"metadata":{"name":"local-cluster"},"status":{"conditions":[{"type":"ManagedClusterConditionAvailable","status":"True","reason":"ManagedClusterAvailable"}]}}`
 
@@ -165,7 +340,7 @@ func TestManagedClusterAvailableConditionDecodesFromACMJSON(t *testing.T) {
 }
 
 func TestProviderContributionIsStable(t *testing.T) {
-	target := offlineClusterTarget("offline-cluster", "https://offline.example.com:6443")
+	target := krknv1alpha1.ClusterTarget{ClusterName: "offline-cluster", ClusterAPIURL: "https://offline.example.com:6443"}
 	request := krknv1alpha1.KrknTargetRequestStatus{
 		TargetData: map[string][]krknv1alpha1.ClusterTarget{
 			"krkn-operator-acm": {target},
@@ -194,7 +369,7 @@ func TestReconcileCompletesExistingContribution(t *testing.T) {
 		Status: krknv1alpha1.KrknTargetRequestStatus{
 			Status: "pending",
 			TargetData: map[string][]krknv1alpha1.ClusterTarget{
-				"krkn-operator-acm": {offlineClusterTarget("cluster", "https://api.example.com")},
+				"krkn-operator-acm": {{ClusterName: "cluster", ClusterAPIURL: "https://api.example.com"}},
 			},
 		},
 	}
@@ -332,6 +507,24 @@ func TestReconcileMarksProxyClusterUnhealthyWhenManifestWorkIsNotReady(t *testin
 		Scheme:            scheme,
 		OperatorName:      "krkn-operator-acm",
 		OperatorNamespace: "operator-system",
+		clusterLivenessProbe: func(_ context.Context, apiURL, caBundle string) (clusterLivenessResult, error) {
+			if apiURL != proxyURL {
+				t.Errorf("liveness probe URL = %q, want proxy URL %q", apiURL, proxyURL)
+			}
+			if caBundle != "" {
+				t.Errorf("liveness probe CA bundle = %q, want empty after proxy CA lookup failure", caBundle)
+			}
+			return clusterLivenessResult{Online: true, Healthy: true}, nil
+		},
+		clusterCredentialProbe: func(_ context.Context, kubeconfig string, timeout time.Duration) error {
+			if kubeconfig == "" {
+				t.Error("credential probe received an empty kubeconfig")
+			}
+			if timeout != clusterLivenessTimeout {
+				t.Errorf("credential probe timeout = %s, want %s", timeout, clusterLivenessTimeout)
+			}
+			return nil
+		},
 	}
 
 	if _, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -355,27 +548,12 @@ func TestReconcileMarksProxyClusterUnhealthyWhenManifestWorkIsNotReady(t *testin
 	if target.ClusterStatus != krknv1alpha1.ClusterStatusUnhealthy {
 		t.Errorf("ClusterStatus = %q, want %q", target.ClusterStatus, krknv1alpha1.ClusterStatusUnhealthy)
 	}
-	if target.Online != nil {
-		t.Errorf("Online = %v, want nil because liveness was not run", *target.Online)
+	if target.Online == nil || !*target.Online {
+		t.Errorf("Online = %v, want true because proxy API was reachable", target.Online)
 	}
-	if target.CheckedAt != nil {
-		t.Errorf("CheckedAt = %v, want nil because liveness was not run", target.CheckedAt)
+	if target.CheckedAt == nil || target.CheckedAt.IsZero() {
+		t.Errorf("CheckedAt = %v, want liveness timestamp", target.CheckedAt)
 	}
-}
-
-func testLivenessKubeconfig(t *testing.T, serverURL string) string {
-	t.Helper()
-	config := clientcmdapi.NewConfig()
-	config.Clusters["test"] = &clientcmdapi.Cluster{Server: serverURL}
-	config.AuthInfos["test-user"] = &clientcmdapi.AuthInfo{}
-	config.Contexts["test-context"] = &clientcmdapi.Context{Cluster: "test", AuthInfo: "test-user"}
-	config.CurrentContext = "test-context"
-
-	data, err := clientcmd.Write(*config)
-	if err != nil {
-		t.Fatalf("failed to write test kubeconfig: %v", err)
-	}
-	return base64.StdEncoding.EncodeToString(data)
 }
 
 func TestGetConfiguredSecretName(t *testing.T) {

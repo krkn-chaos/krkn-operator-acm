@@ -357,6 +357,14 @@ The status should show:
 
 `cluster-status` and liveness are separate signals: a cluster can be `healthy` according to ACM while its API endpoint is offline, or have no liveness result when the operator could not reach the point of running the check.
 
+The liveness check is performed before ACM health is evaluated. An unreachable
+API is reported as `online: false` with `cluster-status: unknown`; a reachable
+API whose health endpoints fail is reported as `online: true` with
+`cluster-status: unhealthy`. After a healthy anonymous probe, the operator also
+validates the generated kubeconfig against the API. Targets with invalid or
+expired credentials are not advertised as online and are excluded from the
+managed-cluster secret.
+
 2. Retrieve the secret with cluster kubeconfigs:
 
 ```bash
