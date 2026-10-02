@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -155,6 +157,75 @@ func TestCheckClusterAPILivenessMarksUnreachableEndpointOffline(t *testing.T) {
 	}
 	if result.Online || result.Healthy {
 		t.Fatalf("liveness result = %+v, want offline and unhealthy", result)
+	}
+}
+
+func TestValidateClusterCredentialsUsesBoundedTimeout(t *testing.T) {
+	var gotKubeconfig string
+	var gotTimeout time.Duration
+	err := validateClusterCredentials(context.Background(), "encoded-kubeconfig", func(
+		_ context.Context, kubeconfig string, timeout time.Duration,
+	) error {
+		gotKubeconfig = kubeconfig
+		gotTimeout = timeout
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("validateClusterCredentials() error = %v", err)
+	}
+	if gotKubeconfig != "encoded-kubeconfig" {
+		t.Fatalf("credential probe kubeconfig = %q, want encoded-kubeconfig", gotKubeconfig)
+	}
+	if gotTimeout != clusterLivenessTimeout {
+		t.Fatalf("credential probe timeout = %s, want %s", gotTimeout, clusterLivenessTimeout)
+	}
+}
+
+func TestValidateClusterCredentialsPropagatesFailure(t *testing.T) {
+	wantErr := fmt.Errorf("invalid token")
+	err := validateClusterCredentials(context.Background(), "encoded-kubeconfig", func(
+		_ context.Context, _ string, _ time.Duration,
+	) error {
+		return wantErr
+	})
+	if err != wantErr {
+		t.Fatalf("validateClusterCredentials() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestProbeManagedClustersPreservesOrderAndBoundsConcurrency(t *testing.T) {
+	inputs := make([]clusterProbeInput, maxConcurrentClusterProbes+2)
+	for i := range inputs {
+		inputs[i].cluster.Metadata.Name = fmt.Sprintf("cluster-%d", i)
+	}
+
+	var active, maxActive atomic.Int32
+	results := probeManagedClusters(context.Background(), inputs, func(
+		_ context.Context, apiURL, _ string,
+	) (clusterLivenessResult, error) {
+		current := active.Add(1)
+		for {
+			previous := maxActive.Load()
+			if current <= previous || maxActive.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+		active.Add(-1)
+		return clusterLivenessResult{Online: true, Healthy: true}, nil
+	})
+
+	if got := maxActive.Load(); got > maxConcurrentClusterProbes {
+		t.Fatalf("maximum concurrent probes = %d, want <= %d", got, maxConcurrentClusterProbes)
+	}
+	for i, result := range results {
+		want := fmt.Sprintf("cluster-%d", i)
+		if result.target.ClusterName != want {
+			t.Fatalf("result %d cluster = %q, want %q", i, result.target.ClusterName, want)
+		}
+		if result.err != nil || !result.liveness.Healthy {
+			t.Fatalf("result %d = %+v, want healthy result", i, result)
+		}
 	}
 }
 
@@ -436,11 +507,23 @@ func TestReconcileMarksProxyClusterUnhealthyWhenManifestWorkIsNotReady(t *testin
 		Scheme:            scheme,
 		OperatorName:      "krkn-operator-acm",
 		OperatorNamespace: "operator-system",
-		clusterLivenessProbe: func(_ context.Context, apiURL, _ string) (clusterLivenessResult, error) {
+		clusterLivenessProbe: func(_ context.Context, apiURL, caBundle string) (clusterLivenessResult, error) {
 			if apiURL != proxyURL {
 				t.Errorf("liveness probe URL = %q, want proxy URL %q", apiURL, proxyURL)
 			}
+			if caBundle != "" {
+				t.Errorf("liveness probe CA bundle = %q, want empty after proxy CA lookup failure", caBundle)
+			}
 			return clusterLivenessResult{Online: true, Healthy: true}, nil
+		},
+		clusterCredentialProbe: func(_ context.Context, kubeconfig string, timeout time.Duration) error {
+			if kubeconfig == "" {
+				t.Error("credential probe received an empty kubeconfig")
+			}
+			if timeout != clusterLivenessTimeout {
+				t.Errorf("credential probe timeout = %s, want %s", timeout, clusterLivenessTimeout)
+			}
+			return nil
 		},
 	}
 

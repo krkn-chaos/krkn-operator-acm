@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -87,10 +88,28 @@ type ClusterData struct {
 // KrknTargetRequestReconciler reconciles a KrknTargetRequest object
 type KrknTargetRequestReconciler struct {
 	client.Client
-	Scheme               *runtime.Scheme
-	OperatorName         string
-	OperatorNamespace    string
-	clusterLivenessProbe func(context.Context, string, string) (clusterLivenessResult, error)
+	Scheme                 *runtime.Scheme
+	OperatorName           string
+	OperatorNamespace      string
+	clusterLivenessProbe   func(context.Context, string, string) (clusterLivenessResult, error)
+	clusterCredentialProbe func(context.Context, string, time.Duration) error
+}
+
+const maxConcurrentClusterProbes = 8
+
+type clusterProbeInput struct {
+	cluster          ManagedCluster
+	clusterURL       string
+	clusterCABundle  string
+	probeURL         string
+	probeCABundle    string
+	proxyModeEnabled bool
+}
+
+type clusterProbeResult struct {
+	target   krknv1alpha1.ClusterTarget
+	liveness clusterLivenessResult
+	err      error
 }
 
 // +kubebuilder:rbac:groups=krkn.krkn-chaos.dev,resources=krkntargetrequests,verbs=get;list;watch;create;update;patch;delete
@@ -229,10 +248,9 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	clustersData := make(map[string]ClusterData)
 	targetData := make([]krknv1alpha1.ClusterTarget, 0, len(managedClusters.Items))
 
+	probeInputs := make([]clusterProbeInput, 0, len(managedClusters.Items))
 	for _, cluster := range managedClusters.Items {
 		clusterName := cluster.Metadata.Name
-		logger.Info("processing cluster", "name", clusterName)
-
 		clusterURL := ""
 		clusterCABundle := ""
 		if len(cluster.Spec.ManagedClusterClientConfigs) > 0 {
@@ -263,14 +281,32 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				}
 			}
 		}
+		probeInputs = append(probeInputs, clusterProbeInput{
+			cluster:          cluster,
+			clusterURL:       clusterURL,
+			clusterCABundle:  clusterCABundle,
+			probeURL:         probeURL,
+			probeCABundle:    probeCABundle,
+			proxyModeEnabled: proxyModeEnabled,
+		})
+	}
 
-		livenessProbe := r.clusterLivenessProbe
-		if livenessProbe == nil {
-			livenessProbe = checkClusterAPILiveness
-		}
-		target, liveness, livenessErr := buildClusterTargetWithProbe(
-			ctx, clusterName, probeURL, probeCABundle, livenessProbe,
-		)
+	livenessProbe := r.clusterLivenessProbe
+	if livenessProbe == nil {
+		livenessProbe = checkClusterAPILiveness
+	}
+	probeResults := probeManagedClusters(ctx, probeInputs, livenessProbe)
+
+	for i, input := range probeInputs {
+		cluster := input.cluster
+		clusterName := cluster.Metadata.Name
+		logger.Info("processing cluster", "name", clusterName)
+		clusterURL := input.clusterURL
+		clusterCABundle := input.clusterCABundle
+		probeURL := input.probeURL
+		proxyModeEnabled := input.proxyModeEnabled
+		probeResult := probeResults[i]
+		target, liveness, livenessErr := probeResult.target, probeResult.liveness, probeResult.err
 		if livenessErr != nil {
 			logger.Error(livenessErr, "cluster liveness check failed", "cluster", clusterName)
 		}
@@ -353,6 +389,23 @@ func (r *KrknTargetRequestReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 		// Encode kubeconfig as base64
 		kubeconfigBase64 := base64.StdEncoding.EncodeToString([]byte(kubeconfig))
+		credentialProbe := r.clusterCredentialProbe
+		if credentialProbe == nil {
+			credentialProbe = provider.CheckClusterLiveness
+		}
+		if liveness.Online && liveness.Healthy {
+			if err := validateClusterCredentials(ctx, kubeconfigBase64, credentialProbe); err != nil {
+				logger.Error(err, "generated cluster credentials failed validation", "cluster", clusterName)
+				// Online is the usability signal consumed by older clients. Do not
+				// advertise a target whose generated credentials cannot access the
+				// API, even if its anonymous health probe succeeded.
+				online := false
+				target.Online = &online
+				target.ClusterStatus = krknv1alpha1.ClusterStatusUnhealthy
+				targetData = append(targetData, target)
+				continue
+			}
+		}
 
 		target.ClusterStatus = clusterStatus
 
@@ -468,6 +521,56 @@ func buildClusterTargetWithProbe(
 		CheckedAt:     &checkedAt,
 	}
 	return target, liveness, livenessErr
+}
+
+func validateClusterCredentials(
+	ctx context.Context,
+	kubeconfigBase64 string,
+	probe func(context.Context, string, time.Duration) error,
+) error {
+	if probe == nil {
+		return fmt.Errorf("cluster credential probe must not be nil")
+	}
+	return probe(ctx, kubeconfigBase64, clusterLivenessTimeout)
+}
+
+// probeManagedClusters runs the anonymous API probes with bounded concurrency
+// and keeps results indexed to the original managed-cluster order.
+func probeManagedClusters(
+	ctx context.Context,
+	inputs []clusterProbeInput,
+	probe func(context.Context, string, string) (clusterLivenessResult, error),
+) []clusterProbeResult {
+	results := make([]clusterProbeResult, len(inputs))
+	if len(inputs) == 0 {
+		return results
+	}
+
+	workerCount := maxConcurrentClusterProbes
+	if len(inputs) < workerCount {
+		workerCount = len(inputs)
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for i := range jobs {
+				input := inputs[i]
+				target, liveness, err := buildClusterTargetWithProbe(
+					ctx, input.cluster.Metadata.Name, input.probeURL, input.probeCABundle, probe,
+				)
+				results[i] = clusterProbeResult{target: target, liveness: liveness, err: err}
+			}
+		}()
+	}
+	for i := range inputs {
+		jobs <- i
+	}
+	close(jobs)
+	workers.Wait()
+	return results
 }
 
 // clusterHealthStatus reports whether ACM considers a managed cluster healthy.

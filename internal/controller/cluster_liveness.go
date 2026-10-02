@@ -128,15 +128,12 @@ func checkClusterAPILivenessWithClient(
 }
 
 func clusterAPITLSConfig(caBundle string) (*tls.Config, error) {
-	rootCAs, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load system root certificates: %w", err)
-	}
-	if rootCAs == nil {
-		rootCAs = x509.NewCertPool()
-	}
-
+	var rootCAs *x509.CertPool
 	if caBundle != "" {
+		// A managed-cluster or proxy CA is an explicit trust boundary. Do not
+		// silently add it to the host roots, otherwise a misconfigured endpoint
+		// could still validate against an unrelated public certificate authority.
+		rootCAs = x509.NewCertPool()
 		caPEM, err := base64.StdEncoding.DecodeString(caBundle)
 		if err != nil {
 			// ManagedCluster client configs serialize CA byte slices as base64,
@@ -145,6 +142,15 @@ func clusterAPITLSConfig(caBundle string) (*tls.Config, error) {
 		}
 		if !rootCAs.AppendCertsFromPEM(caPEM) {
 			return nil, fmt.Errorf("CA bundle contains no valid certificates")
+		}
+	} else {
+		var err error
+		rootCAs, err = x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system root certificates: %w", err)
+		}
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
 		}
 	}
 
