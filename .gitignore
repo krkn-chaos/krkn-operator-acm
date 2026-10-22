@@ -32,3 +32,8 @@ bin/
 
 # CRDs are copied from krkn-operator dependency during tests
 config/crd/bases/*
+
+# Graphify local state
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/cost.json
