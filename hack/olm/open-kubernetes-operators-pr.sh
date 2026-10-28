@@ -31,7 +31,7 @@ csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f \
 }
 
 missing_metadata=$(yq -r \
-  '[(.spec.customresourcedefinitions.owned // [])[] |
+  '[((.spec.customresourcedefinitions // .spec.customResourceDefinitions).owned // [])[] |
     select((.displayName // "") == "" or (.description // "") == "") |
     .name] | join(", ")' "$csv_file")
 [[ -z "$missing_metadata" ]] || {
