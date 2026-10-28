@@ -30,13 +30,8 @@ csv_file=$(find "$bundle_dir/manifests" -maxdepth 1 -type f \
   exit 1
 }
 
-owned_crds=$(yq -r '.spec.customresourcedefinitions.owned | length' "$csv_file")
-[[ "$owned_crds" -gt 0 ]] || {
-  echo "bundle CSV does not declare any owned CRDs" >&2
-  exit 1
-}
 missing_metadata=$(yq -r \
-  '[.spec.customresourcedefinitions.owned[] |
+  '[(.spec.customresourcedefinitions.owned // [])[] |
     select((.displayName // "") == "" or (.description // "") == "") |
     .name] | join(", ")' "$csv_file")
 [[ -z "$missing_metadata" ]] || {

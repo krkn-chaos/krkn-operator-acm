@@ -32,13 +32,27 @@ cat >"$test_dir/manifests/operator.clusterserviceversion.yaml" <<'EOF'
 kind: ClusterServiceVersion
 spec:
   customresourcedefinitions:
-    owned:
+    required:
       - name: krkncomponents.krkn.krkn-chaos.dev
+        displayName: Krkn Component
         description: Krkn components
 EOF
+expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
+  env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
+
+yq -i '.spec.customresourcedefinitions.owned = [{"name": "krkncomponents.krkn.krkn-chaos.dev", "description": "Krkn components"}]' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
 expect_failure "without displayName or description: krkncomponents.krkn.krkn-chaos.dev" \
   "${script[@]}" 1.0.0 "$test_dir"
 yq -i '.spec.customresourcedefinitions.owned[0].displayName = "Krkn Component"' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
+expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
+  env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
+yq -i 'del(.spec.customresourcedefinitions.owned[0].description)' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
+expect_failure "without displayName or description: krkncomponents.krkn.krkn-chaos.dev" \
+  "${script[@]}" 1.0.0 "$test_dir"
+yq -i '.spec.customresourcedefinitions.owned[0].description = "Krkn components"' \
   "$test_dir/manifests/operator.clusterserviceversion.yaml"
 expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
   env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
