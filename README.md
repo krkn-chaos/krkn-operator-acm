@@ -36,7 +36,9 @@ is documented in the [compatibility matrix](https://krkn-chaos.dev/docs/krkn-ope
 ## Catalog release automation
 
 The release workflow automatically submits the rendered OLM bundle to the
-`community-operators-prod` catalog after a version tag is published. Configure
+`community-operators-prod` catalog after a stable version tag is published.
+Prerelease tags publish bundle images for testing but do not submit to public
+Kubernetes or OpenShift catalogs. Configure
 these GitHub Actions organization-level settings before using the workflow:
 
 - `COMMUNITY_OPERATORS_FORK`: repository variable containing the fork in the

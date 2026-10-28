@@ -189,6 +189,7 @@ jobs:
   submit-community-catalog:
     name: Open OpenShift community operators catalog PR
     needs: publish-olm-bundle
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -219,7 +220,7 @@ jobs:
   submit-operatorhub-catalog:
     name: Open Kubernetes OperatorHub catalog PR
     needs: publish-olm-bundle
-    if: vars.KUBERNETES_OPERATORS_FORK != ''
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
