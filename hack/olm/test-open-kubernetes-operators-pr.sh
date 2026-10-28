@@ -28,16 +28,46 @@ printf '%s\n' '---' >"$test_dir/metadata/annotations.yaml"
 expect_failure "does not contain a ClusterServiceVersion" \
   "${script[@]}" 1.0.0 "$test_dir"
 
-printf '%s\n' '---' 'kind: ClusterServiceVersion' \
-  >"$test_dir/manifests/operator.clusterserviceversion.yaml"
+cat >"$test_dir/manifests/operator.clusterserviceversion.yaml" <<'EOF'
+kind: ClusterServiceVersion
+spec:
+  customresourcedefinitions:
+    required:
+      - name: krkncomponents.krkn.krkn-chaos.dev
+        displayName: Krkn Component
+        description: Krkn components
+EOF
+expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
+  env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
+
+cat >"$test_dir/manifests/operator.clusterserviceversion.yaml" <<'EOF'
+kind: ClusterServiceVersion
+spec:
+  customResourceDefinitions:
+    owned:
+      - name: krkncomponents.krkn.krkn-chaos.dev
+        description: Krkn components
+EOF
+expect_failure "without displayName or description: krkncomponents.krkn.krkn-chaos.dev" \
+  "${script[@]}" 1.0.0 "$test_dir"
+yq -i '.spec.customResourceDefinitions.owned[0].displayName = "Krkn Component"' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
+expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
+  env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
+yq -i 'del(.spec.customResourceDefinitions.owned[0].description)' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
+expect_failure "without displayName or description: krkncomponents.krkn.krkn-chaos.dev" \
+  "${script[@]}" 1.0.0 "$test_dir"
+yq -i '.spec.customResourceDefinitions.owned[0].description = "Krkn components"' \
+  "$test_dir/manifests/operator.clusterserviceversion.yaml"
 expect_failure "KUBERNETES_OPERATORS_FORK must be configured" \
   env -u KUBERNETES_OPERATORS_FORK -u GH_TOKEN "${script[@]}" 1.0.0 "$test_dir"
 
 stub_dir="$test_dir/bin"
 bundle_dir="$test_dir/bundle"
 mkdir -p "$stub_dir" "$bundle_dir/manifests" "$bundle_dir/metadata"
-printf '%s\n' 'kind: ClusterServiceVersion' \
-  >"$bundle_dir/manifests/operator.clusterserviceversion.yaml"
+cp "$test_dir/manifests/operator.clusterserviceversion.yaml" \
+  "$bundle_dir/manifests/operator.clusterserviceversion.yaml"
 printf '%s\n' '---' >"$bundle_dir/metadata/annotations.yaml"
 export TEST_CALL_LOG="$test_dir/calls.log"
 
